@@ -64,17 +64,9 @@ input:focus,select:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(139,92,
     <div class="card">
       <div class="ch"><div class="badge">1</div><div><h2>توکن API</h2><p>Cloudflare API Token</p></div></div>
       <div class="conn" id="connBox"><div class="sp"></div><span>آماده‌سازی اتصال…</span></div>
-      <div class="box">
-        <b>مهم — Account Resources:</b><br>
-        هنگام ساخت توکن در بخش <b>Account Resources</b> حتماً <code>All accounts</code> را انتخاب کن.<br>
-        اگر این بخش خالی بماند، اکانت پیدا نمی‌شود.
-      </div>
-      <a class="btn btn-s" target="_blank" rel="noopener" href="https://dash.cloudflare.com/profile/api-tokens">🔑 باز کردن صفحه توکن</a>
-      <div class="hint" style="margin-bottom:12px">
-        Create Token → Create Custom Token<br>
-        دسترسی‌ها: <b>Account</b> Read · <b>Account Analytics</b> Read · <b>D1</b> Edit · <b>Workers Scripts</b> Edit<br>
-        Account Resources: <b>All accounts</b> ← الزامی
-      </div>
+      
+      <a class="btn btn-s" target="_blank" rel="noopener" href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%5D&accountId=*&zoneId=all&name=Leviko-Installer">🔑 ساخت توکن آماده‌شده</a>
+      
       <div class="field"><label>API Token</label>
         <input type="password" id="apiToken" dir="ltr" style="text-align:left" placeholder="••••••••">
         <button type="button" class="eye" onclick="tog('apiToken')">👁</button>
@@ -226,7 +218,7 @@ async function go2(){
   S.token=tok;hideErr('e1');
   const r=await cf('/accounts');
   if(!r.success||!r.result?.length){
-    showErr('e1',(r.errors?.[0]?.message||'اکانت پیدا نشد')+'\n\nAccount Resources را روی All accounts بگذار و توکن جدید بساز.');
+    showErr('e1',(r.errors?.[0]?.message||'اکانت پیدا نشد'));
     return;
   }
   S.accounts=r.result;
