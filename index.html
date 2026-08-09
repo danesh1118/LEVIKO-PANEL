@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leviko Installer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Vazirmatn:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #050508;
+  --bg2: #0a0a12;
+  --card: rgba(16, 16, 28, 0.72);
+  --card2: rgba(22, 22, 38, 0.9);
+  --line: rgba(255,255,255,0.07);
+  --line2: rgba(255,255,255,0.13);
+  --txt: #f2f0ff;
+  --mut: #9b97b8;
+  --faint: #5c5878;
+  --p: #8b5cf6;
+  --p2: #a78bfa;
+  --p3: #c4b5fd;
+  --glow: rgba(139, 92, 246, 0.4);
+  --ok: #34d399;
+  --ok-bg: rgba(52, 211, 153, 0.12);
+  --warn: #fbbf24;
+  --err: #f87171;
+  --err-bg: rgba(248, 113, 113, 0.12);
+  --r: 22px;
+  --rs: 14px;
+  --font: 'Vazirmatn', system-ui, sans-serif;
+  --en: 'Outfit', system-ui, sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 15px; -webkit-tap-highlight-color: transparent; }
+body {
+  min-height: 100vh;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--txt);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+/* layered atmosphere */
+.fx {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+}
+.fx-orb {
+  position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.55;
+}
+.fx-orb.a { width: 420px; height: 420px; top: -120px; right: -80px; background: #7c3aed; }
+.fx-orb.b { width: 360px; height: 360px; bottom: 10%; left: -100px; background: #4c1d95; opacity: 0.35; }
+.fx-orb.c { width: 200px; height: 200px; top: 45%; right: 15%; background: #6d28d9; opacity: 0.2; }
+.fx-grid {
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(139,92,246,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(139,92,246,0.04) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 75% 60% at 50% 30%, #000 10%, transparent 70%);
+}
+
+.shell {
+  position: relative; z-index: 1;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 28px 18px 72px;
+}
+
+/* header */
+.hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 32px;
+}
+.logo {
+  display: flex; align-items: center; gap: 12px;
+}
+.logo-3d {
+  width: 48px; height: 48px; border-radius: 16px;
+  background: linear-gradient(145deg, #c4b5fd 0%, #8b5cf6 45%, #5b21b6 100%);
+  display: grid; place-items: center;
+  font-family: var(--en); font-weight: 800; font-size: 1.25rem; color: #fff;
+  box-shadow:
+    0 10px 30px var(--glow),
+    inset 0 1px 0 rgba(255,255,255,0.35),
+    inset 0 -2px 6px rgba(0,0,0,0.25);
+  transform: perspective(420px) rotateY(-12deg) rotateX(8deg);
+  transition: transform 0.35s ease;
+}
+.logo:hover .logo-3d { transform: perspective(420px) rotateY(0) rotateX(0); }
+.logo-meta strong {
+  display: block; font-size: 1.1rem; font-weight: 800; letter-spacing: -0.02em;
+}
+.logo-meta span {
+  font-family: var(--en); font-size: 0.68rem; color: var(--mut);
+  letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600;
+}
+.lang {
+  background: var(--card2); border: 1px solid var(--line);
+  color: var(--mut); padding: 8px 14px; border-radius: 999px;
+  font-family: var(--en); font-size: 0.78rem; font-weight: 600;
+  cursor: pointer; transition: 0.2s;
+}
+.lang:hover { border-color: var(--p); color: var(--p2); }
+
+/* hero */
+.hero { text-align: center; margin-bottom: 26px; }
+.hero h1 {
+  font-size: 1.7rem; font-weight: 800; letter-spacing: -0.03em;
+  background: linear-gradient(135deg, #fff 20%, var(--p3) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  margin-bottom: 8px;
+}
+.hero p { color: var(--mut); font-size: 0.92rem; max-width: 360px; margin: 0 auto; }
+
+/* steps rail */
+.rail { display: flex; gap: 8px; margin-bottom: 20px; }
+.rail i {
+  flex: 1; height: 5px; border-radius: 99px;
+  background: rgba(255,255,255,0.06); transition: 0.4s;
+}
+.rail i.on {
+  background: linear-gradient(90deg, var(--p), var(--p2));
+  box-shadow: 0 0 16px var(--glow);
+}
+.rail i.done { background: var(--ok); box-shadow: none; }
+
+/* card */
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 26px 22px;
+  backdrop-filter: blur(28px) saturate(1.5);
+  -webkit-backdrop-filter: blur(28px) saturate(1.5);
+  box-shadow:
+    0 24px 60px rgba(0,0,0,0.45),
+    inset 0 1px 0 rgba(255,255,255,0.05);
+}
+.card-h {
+  display: flex; align-items: flex-start; gap: 14px; margin-bottom: 20px;
+}
+.badge {
+  width: 36px; height: 36px; border-radius: 12px; flex-shrink: 0;
+  background: linear-gradient(145deg, rgba(139,92,246,0.25), rgba(91,33,182,0.15));
+  border: 1px solid rgba(139,92,246,0.35);
+  color: var(--p2); display: grid; place-items: center;
+  font-family: var(--en); font-weight: 800; font-size: 0.95rem;
+}
+.card-h h2 { font-size: 1.08rem; font-weight: 800; }
+.card-h p { font-size: 0.8rem; color: var(--mut); margin-top: 2px; }
+
+/* form */
+label {
+  display: block; font-size: 0.76rem; font-weight: 600;
+  color: var(--mut); margin-bottom: 6px; letter-spacing: 0.02em;
+}
+.field { margin-bottom: 15px; position: relative; }
+input[type=text], input[type=password] {
+  width: 100%; padding: 13px 14px;
+  background: var(--bg2); border: 1px solid var(--line);
+  border-radius: var(--rs); color: var(--txt);
+  font-family: var(--font); font-size: 0.95rem; outline: none; transition: 0.2s;
+}
+input:focus {
+  border-color: var(--p);
+  box-shadow: 0 0 0 3px rgba(139,92,246,0.18);
+}
+input::placeholder { color: var(--faint); }
+.eye {
+  position: absolute; left: 12px; top: 33px;
+  background: none; border: none; color: var(--faint);
+  cursor: pointer; font-size: 1rem; padding: 4px;
+}
+.hint { font-size: 0.74rem; color: var(--faint); margin-top: 5px; }
+
+/* buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 14px 18px; border: none; border-radius: var(--rs);
+  font-family: var(--font); font-size: 0.95rem; font-weight: 700;
+  cursor: pointer; transition: 0.2s;
+}
+.btn-p {
+  background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 50%, #6d28d9 100%);
+  color: #fff;
+  box-shadow: 0 8px 28px var(--glow), inset 0 1px 0 rgba(255,255,255,0.2);
+}
+.btn-p:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.btn-p:disabled { opacity: 0.45; cursor: not-allowed; transform: none; filter: none; }
+.btn-ghost {
+  background: transparent; border: 1px solid var(--line); color: var(--mut); margin-top: 10px;
+}
+.btn-ghost:hover { border-color: var(--p); color: var(--p2); }
+.btn-soft {
+  background: rgba(139,92,246,0.08); border: 1px dashed rgba(139,92,246,0.35);
+  color: var(--p2); margin-bottom: 16px;
+}
+.btn-soft:hover { background: rgba(139,92,246,0.14); border-style: solid; }
+
+/* mode tabs */
+.modes {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px;
+}
+.mode {
+  padding: 12px; text-align: center; border-radius: var(--rs);
+  border: 1px solid var(--line); background: var(--bg2);
+  cursor: pointer; transition: 0.2s; font-size: 0.85rem; font-weight: 600; color: var(--mut);
+}
+.mode.on {
+  border-color: var(--p); color: var(--p2);
+  background: rgba(139,92,246,0.1);
+  box-shadow: 0 0 0 1px rgba(139,92,246,0.2);
+}
+.mode small { display: block; font-size: 0.7rem; font-weight: 500; color: var(--faint); margin-top: 2px; }
+
+/* features */
+.feats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px;
+}
+.feat {
+  padding: 12px; border-radius: 12px; background: rgba(255,255,255,0.02);
+  border: 1px solid var(--line); font-size: 0.78rem; color: var(--mut);
+}
+.feat b { color: var(--p3); display: block; margin-bottom: 2px; font-size: 0.82rem; }
+
+/* advanced */
+.adv-t {
+  font-size: 0.78rem; color: var(--faint); cursor: pointer; user-select: none;
+  margin-bottom: 12px; display: inline-flex; align-items: center; gap: 6px;
+}
+.adv-t:hover { color: var(--p2); }
+.adv { display: none; }
+.adv.open { display: block; }
+
+/* progress */
+.plist { list-style: none; }
+.plist li {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 0.9rem;
+}
+.plist li:last-child { border-bottom: none; }
+.dot {
+  width: 28px; height: 28px; border-radius: 10px; flex-shrink: 0;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--line);
+  color: var(--faint); display: grid; place-items: center;
+  font-family: var(--en); font-size: 0.72rem; font-weight: 800; transition: 0.25s;
+}
+.dot.run { border-color: var(--warn); color: var(--warn); animation: pulse 1s infinite; }
+.dot.ok { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+.dot.fail { background: var(--err-bg); border-color: var(--err); color: var(--err); }
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+.log {
+  margin-top: 14px; max-height: 120px; overflow-y: auto;
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--bg); border: 1px solid var(--line);
+  font-family: ui-monospace, monospace; font-size: 0.72rem; color: var(--faint);
+  display: none;
+}
+.log.show { display: block; }
+.log div { margin-bottom: 3px; }
+.log .ok { color: var(--ok); }
+.log .err { color: var(--err); }
+
+/* result */
+.win {
+  display: none; margin-top: 18px; padding: 22px;
+  background: var(--ok-bg); border: 1px solid rgba(52,211,153,0.35);
+  border-radius: var(--rs); text-align: center;
+}
+.win.show { display: block; animation: rise 0.4s ease; }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.win h3 { color: var(--ok); font-size: 1.1rem; font-weight: 800; margin-bottom: 6px; }
+.win a {
+  display: block; color: var(--p3); font-weight: 700; word-break: break-all;
+  font-size: 0.88rem; margin: 12px 0 6px; text-decoration: none;
+}
+.win a:hover { text-decoration: underline; }
+.win .note { font-size: 0.78rem; color: var(--mut); }
+.win-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+
+.err {
+  display: none; margin: 12px 0; padding: 12px 14px;
+  background: var(--err-bg); border: 1px solid rgba(248,113,113,0.35);
+  border-radius: var(--rs); color: var(--err); font-size: 0.85rem;
+}
+.err.show { display: block; }
+
+.panel { display: none; animation: rise 0.35s ease; }
+.panel.on { display: block; }
+
+.foot {
+  text-align: center; margin-top: 28px; font-size: 0.75rem; color: var(--faint);
+}
+.foot a { color: var(--p2); text-decoration: none; }
+
+@media (max-width: 440px) {
+  .shell { padding: 22px 14px 56px; }
+  .hero h1 { font-size: 1.4rem; }
+  .feats { grid-template-columns: 1fr; }
+  .win-actions { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="fx">
+  <div class="fx-orb a"></div>
+  <div class="fx-orb b"></div>
+  <div class="fx-orb c"></div>
+  <div class="fx-grid"></div>
+</div>
+
+<div class="shell">
+  <div class="hdr">
+    <div class="logo">
+      <div class="logo-3d">L</div>
+      <div class="logo-meta">
+        <strong>Leviko</strong>
+        <span>Installer</span>
+      </div>
+    </div>
+    <button class="lang" id="langBtn" onclick="toggleLang()">EN</button>
+  </div>
+
+  <div class="hero">
+    <h1 id="t-title">نصب خودکار لویکو</h1>
+    <p id="t-sub">استقرار پنل روی Cloudflare با یک توکن — بدون ترمینال</p>
+  </div>
+
+  <div class="rail" id="rail">
+    <i class="on" data-r="1"></i>
+    <i data-r="2"></i>
+    <i data-r="3"></i>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="panel on" id="p1">
+    <div class="card">
+      <div class="card-h">
+        <div class="badge">1</div>
+        <div>
+          <h2 id="t-s1">اتصال به Cloudflare</h2>
+          <p id="t-s1d">توکن API با دسترسی Worker و D1 بساز</p>
+        </div>
+      </div>
+
+      <a class="btn btn-soft" id="tokenLink" target="_blank" rel="noopener"
+         href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%5D&name=Leviko-Installer">
+        🔑 <span id="t-create">ساخت توکن آماده‌شده</span>
+      </a>
+
+      <div class="field">
+        <label id="t-tokL">API Token</label>
+        <input type="password" id="apiToken" placeholder="••••••••••••••••••••••••" autocomplete="off">
+        <button type="button" class="eye" onclick="toggleEye()">👁</button>
+        <div class="hint" id="t-tokH">توکن فقط یک‌بار نمایش داده می‌شود</div>
+      </div>
+
+      <div class="err" id="e1"></div>
+      <button class="btn btn-p" onclick="go2()"><span id="t-next">ادامه</span></button>
+    </div>
+
+    <div class="feats">
+      <div class="feat"><b id="t-f1">D1 خودکار</b><span id="t-f1d">ساخت و اتصال دیتابیس</span></div>
+      <div class="feat"><b id="t-f2">Deploy Worker</b><span id="t-f2d">آپلود worker.js</span></div>
+      <div class="feat"><b id="t-f3">Binding DB</b><span id="t-f3d">متغیر الزامی پنل</span></div>
+      <div class="feat"><b id="t-f4">workers.dev</b><span id="t-f4d">فعال‌سازی آدرس عمومی</span></div>
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="panel" id="p2">
+    <div class="card">
+      <div class="card-h">
+        <div class="badge">2</div>
+        <div>
+          <h2 id="t-s2">پیکربندی</h2>
+          <p id="t-s2d">نصب تازه یا بروزرسانی Worker موجود</p>
+        </div>
+      </div>
+
+      <div class="modes">
+        <div class="mode on" data-mode="install" onclick="setMode('install')">
+          <span id="t-m1">نصب تازه</span>
+          <small id="t-m1d">ساخت Worker + D1</small>
+        </div>
+        <div class="mode" data-mode="update" onclick="setMode('update')">
+          <span id="t-m2">بروزرسانی</span>
+          <small id="t-m2d">کد Worker موجود</small>
+        </div>
+      </div>
+
+      <div class="field">
+        <label id="t-wL">نام Worker</label>
+        <input type="text" id="workerName" value="leviko" placeholder="leviko">
+        <div class="hint" id="t-wH">حروف کوچک، عدد، خط تیره</div>
+      </div>
+      <div class="field" id="dbField">
+        <label id="t-dL">نام دیتابیس D1</label>
+        <input type="text" id="dbName" value="leviko-db" placeholder="leviko-db">
+      </div>
+
+      <div class="adv-t" onclick="document.getElementById('adv').classList.toggle('open')">
+        ⚙️ <span id="t-adv">تنظیمات پیشرفته</span>
+      </div>
+      <div class="adv" id="adv">
+        <div class="field">
+          <label id="t-pL">Proxy URL (CORS)</label>
+          <input type="text" id="proxyUrl" placeholder="اختیاری — برای دور زدن CORS">
+          <div class="hint" id="t-pH">اگر API مستقیم بلاک شد، پروکسی خودت را بگذار</div>
+        </div>
+      </div>
+
+      <div class="err" id="e2"></div>
+      <button class="btn btn-p" id="btnRun" onclick="run()">🚀 <span id="t-run">شروع</span></button>
+      <button class="btn btn-ghost" onclick="go1()">← <span id="t-back">بازگشت</span></button>
+    </div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="panel" id="p3">
+    <div class="card">
+      <div class="card-h">
+        <div class="badge">3</div>
+        <div>
+          <h2 id="t-s3">در حال اجرا</h2>
+          <p id="t-s3d">این صفحه را باز نگه دار</p>
+        </div>
+      </div>
+
+      <ul class="plist">
+        <li data-s="account"><span class="dot">1</span><span id="t-st1">احراز حساب</span></li>
+        <li data-s="code"><span class="dot">2</span><span id="t-st2">دریافت سورس پنل</span></li>
+        <li data-s="d1"><span class="dot">3</span><span id="t-st3">دیتابیس D1</span></li>
+        <li data-s="worker"><span class="dot">4</span><span id="t-st4">استقرار Worker</span></li>
+        <li data-s="url"><span class="dot">5</span><span id="t-st5">آدرس workers.dev</span></li>
+        <li data-s="done"><span class="dot">6</span><span id="t-st6">پایان</span></li>
+      </ul>
+
+      <div class="log" id="log"></div>
+      <div class="err" id="e3"></div>
+
+      <div class="win" id="win">
+        <h3 id="t-ok">Leviko آماده است</h3>
+        <div style="font-size:0.82rem;color:var(--mut)" id="t-okL">لینک پنل ادمین</div>
+        <a id="panelUrl" href="#" target="_blank" rel="noopener"></a>
+        <div class="note" id="t-okN">اولین ورود: رمز پنل را خودت می‌سازی</div>
+        <div class="win-actions">
+          <button class="btn btn-p" onclick="window.open(document.getElementById('panelUrl').href,'_blank')">
+            <span id="t-open">باز کردن پنل</span>
+          </button>
+          <button class="btn btn-ghost" style="margin:0" onclick="copyUrl()">
+            <span id="t-copy">کپی لینک</span>
+          </button>
+        </div>
+      </div>
+
+      <button class="btn btn-ghost" id="btnRetry" style="display:none" onclick="run()">
+        🔄 <span id="t-retry">تلاش مجدد</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="foot">
+    Leviko Panel · <a href="https://github.com/danesh1118/LEVIKO-PANEL" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</div>
+
+<script>
+const REPO = {
+  raw: [
+    'https://cdn.jsdelivr.net/gh/danesh1118/LEVIKO-PANEL@main/worker.js',
+    'https://raw.githubusercontent.com/danesh1118/LEVIKO-PANEL/refs/heads/main/worker.js',
+    'https://api.github.com/repos/danesh1118/LEVIKO-PANEL/contents/worker.js?ref=main',
+  ],
+  panelPath: '/leviko',
+  binding: 'DB',
+  module: 'index.js',
+};
+
+const I18N = {
+  fa: {
+    title:'نصب خودکار لویکو', sub:'استقرار پنل روی Cloudflare با یک توکن — بدون ترمینال',
+    s1:'اتصال به Cloudflare', s1d:'توکن API با دسترسی Worker و D1 بساز',
+    create:'ساخت توکن آماده‌شده', tokL:'API Token', tokH:'توکن فقط یک‌بار نمایش داده می‌شود', next:'ادامه',
+    f1:'D1 خودکار', f1d:'ساخت و اتصال دیتابیس', f2:'Deploy Worker', f2d:'آپلود worker.js',
+    f3:'Binding DB', f3d:'متغیر الزامی پنل', f4:'workers.dev', f4d:'فعال‌سازی آدرس عمومی',
+    s2:'پیکربندی', s2d:'نصب تازه یا بروزرسانی Worker موجود',
+    m1:'نصب تازه', m1d:'ساخت Worker + D1', m2:'بروزرسانی', m2d:'کد Worker موجود',
+    wL:'نام Worker', wH:'حروف کوچک، عدد، خط تیره', dL:'نام دیتابیس D1',
+    adv:'تنظیمات پیشرفته', pL:'Proxy URL (CORS)', pH:'اگر API مستقیم بلاک شد، پروکسی خودت را بگذار',
+    run:'شروع', back:'بازگشت', s3:'در حال اجرا', s3d:'این صفحه را باز نگه دار',
+    st1:'احراز حساب', st2:'دریافت سورس پنل', st3:'دیتابیس D1', st4:'استقرار Worker', st5:'آدرس workers.dev', st6:'پایان',
+    ok:'Leviko آماده است', okL:'لینک پنل ادمین', okN:'اولین ورود: رمز پنل را خودت می‌سازی',
+    open:'باز کردن پنل', copy:'کپی لینک', retry:'تلاش مجدد',
+    eTok:'توکن را وارد کن', eName:'نام Worker نامعتبر', eAcc:'خطا در حساب Cloudflare', eCode:'دانلود سورس ناموفق',
+    eD1:'خطا در D1', eDep:'استقرار Worker ناموفق',
+  },
+  en: {
+    title:'Leviko Auto Installer', sub:'Deploy the panel on Cloudflare with one token — no terminal',
+    s1:'Connect Cloudflare', s1d:'Create an API token with Worker & D1 access',
+    create:'Create pre-filled token', tokL:'API Token', tokH:'Token is shown only once', next:'Continue',
+    f1:'Auto D1', f1d:'Create & bind database', f2:'Deploy Worker', f2d:'Upload worker.js',
+    f3:'Binding DB', f3d:'Required panel variable', f4:'workers.dev', f4d:'Enable public URL',
+    s2:'Configuration', s2d:'Fresh install or update existing Worker',
+    m1:'Fresh install', m1d:'Create Worker + D1', m2:'Update', m2d:'Existing Worker code',
+    wL:'Worker name', wH:'lowercase, numbers, hyphens', dL:'D1 database name',
+    adv:'Advanced settings', pL:'Proxy URL (CORS)', pH:'Use if direct API is blocked',
+    run:'Start', back:'Back', s3:'Running', s3d:'Keep this page open',
+    st1:'Verify account', st2:'Fetch panel source', st3:'D1 database', st4:'Deploy Worker', st5:'workers.dev URL', st6:'Done',
+    ok:'Leviko is ready', okL:'Admin panel link', okN:'First visit: set your own panel password',
+    open:'Open panel', copy:'Copy link', retry:'Retry',
+    eTok:'Enter API token', eName:'Invalid worker name', eAcc:'Cloudflare account error', eCode:'Failed to download source',
+    eD1:'D1 error', eDep:'Worker deploy failed',
+  }
+};
+
+let lang = 'fa';
+let mode = 'install';
+const S = {
+  token: '', accountId: '', workerName: 'leviko', dbName: 'leviko-db',
+  dbId: '', code: '', url: '', subdomain: '', proxy: ''
+};
+
+function t(k){ return I18N[lang][k] || k; }
+function applyLang(){
+  document.documentElement.lang = lang;
+  document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
+  document.getElementById('langBtn').textContent = lang === 'fa' ? 'EN' : 'FA';
+  const ids = ['title','sub','s1','s1d','create','tokL','tokH','next','f1','f1d','f2','f2d','f3','f3d','f4','f4d','s2','s2d','m1','m1d','m2','m2d','wL','wH','dL','adv','pL','pH','run','back','s3','s3d','st1','st2','st3','st4','st5','st6','ok','okL','okN','open','copy','retry'];
+  ids.forEach(k => {
+    const el = document.getElementById('t-'+k);
+    if (el) el.textContent = t(k);
+  });
+}
+function toggleLang(){ lang = lang === 'fa' ? 'en' : 'fa'; applyLang(); }
+function toggleEye(){ const i=document.getElementById('apiToken'); i.type = i.type==='password'?'text':'password'; }
+
+function setMode(m){
+  mode = m;
+  document.querySelectorAll('.mode').forEach(el => el.classList.toggle('on', el.dataset.mode === m));
+  document.getElementById('dbField').style.display = m === 'install' ? 'block' : 'none';
+}
+
+function setRail(n){
+  document.querySelectorAll('.rail i').forEach(el => {
+    const r = +el.dataset.r;
+    el.classList.remove('on','done');
+    if (r < n) el.classList.add('done');
+    if (r === n) el.classList.add('on');
+  });
+}
+function show(n){
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('on'));
+  document.getElementById('p'+n).classList.add('on');
+  setRail(n);
+}
+function go1(){ show(1); }
+function go2(){
+  const tok = document.getElementById('apiToken').value.trim();
+  if (!tok || tok.length < 20) { err('e1', t('eTok')); return; }
+  S.token = tok; hide('e1'); show(2);
+}
+
+function err(id, msg){ const e=document.getElementById(id); e.textContent=msg; e.classList.add('show'); }
+function hide(id){ const e=document.getElementById(id); e.textContent=''; e.classList.remove('show'); }
+
+function setStep(name, st){
+  const li = document.querySelector(`[data-s="${name}"]`);
+  if (!li) return;
+  const d = li.querySelector('.dot');
+  d.className = 'dot' + (st ? ' '+st : '');
+  if (st==='ok') d.textContent='✓';
+  else if (st==='fail') d.textContent='✗';
+  else if (st==='run') d.textContent='…';
+}
+
+function log(msg, type=''){
+  const box = document.getElementById('log');
+  box.classList.add('show');
+  const line = document.createElement('div');
+  if (type) line.className = type;
+  line.textContent = msg;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+async function cf(path, opts={}){
+  const headers = { Authorization: 'Bearer '+S.token, ...(opts.headers||{}) };
+  if (S.proxy) {
+    headers['X-Proxy-Target'] = path;
+    const res = await fetch(S.proxy, { method: opts.method||'GET', headers, body: opts.body });
+    const text = await res.text();
+    let data; try { data = JSON.parse(text); } catch { data = { success:false, errors:[{message:text}] }; }
+    data._status = res.status;
+    return data;
+  }
+  const res = await fetch('https://api.cloudflare.com/client/v4'+path, {
+    method: opts.method||'GET',
+    headers: { ...headers, ...(opts.body && !(opts.body instanceof FormData) ? {'Content-Type':'application/json'} : {}) },
+    body: opts.body
+  });
+  const text = await res.text();
+  let data; try { data = JSON.parse(text); } catch { data = { success:false, errors:[{message:text}] }; }
+  data._status = res.status;
+  return data;
+}
+
+async function fetchCode(){
+  const sources = [];
+  if (S.proxy) sources.push({ proxy:true, url: S.proxy.replace(/\/$/,'')+'/github', gh: REPO.raw[1] });
+  REPO.raw.forEach(u => sources.push({ proxy:false, url:u }));
+
+  const errors = [];
+  for (const s of sources) {
+    try {
+      const opts = s.proxy ? { headers: { 'X-GitHub-Url': s.gh } } : {};
+      const res = await fetch(s.url, opts);
+      if (!res.ok) { errors.push(res.status); continue; }
+      let code;
+      if (s.url.includes('api.github.com')) {
+        const j = await res.json();
+        const bin = atob(j.content.replace(/\n/g,''));
+        const bytes = new Uint8Array(bin.length);
+        for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+        code = new TextDecoder().decode(bytes);
+      } else code = await res.text();
+      if (!code || code.length < 3000) { errors.push('small'); continue; }
+      if (!code.includes('export default')) { errors.push('invalid'); continue; }
+      S.code = code;
+      log('source ok · ' + (code.length/1024).toFixed(1) + ' KB', 'ok');
+      return { ok:true };
+    } catch(e) { errors.push(e.message); }
+  }
+  return { ok:false, msg: errors.join(' | ') };
+}
+
+async function account(){
+  const r = await cf('/accounts');
+  if (r.success && r.result?.length) {
+    S.accountId = r.result[0].id;
+    log('account · ' + (r.result[0].name || S.accountId), 'ok');
+    return { ok:true };
+  }
+  return { ok:false, msg: r.errors?.[0]?.message || t('eAcc') };
+}
+
+async function ensureD1(){
+  if (mode === 'update') {
+    // try read binding from existing worker
+    const set = await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}/settings`);
+    if (set.success && set.result?.bindings) {
+      const b = set.result.bindings.find(x => x.name === REPO.binding || x.type === 'd1');
+      if (b && (b.id || b.uuid)) {
+        S.dbId = b.id || b.uuid;
+        log('existing D1 binding · ' + S.dbId, 'ok');
+        return { ok:true };
+      }
+    }
+    // fallback list d1 by name
+  }
+  const list = await cf(`/accounts/${S.accountId}/d1/database`);
+  if (list.success && list.result) {
+    const f = list.result.find(d => d.name === S.dbName);
+    if (f) {
+      S.dbId = f.uuid || f.id;
+      log('D1 exists · ' + S.dbName, 'ok');
+      return { ok:true };
+    }
+  }
+  if (mode === 'update' && !S.dbId) {
+    return { ok:false, msg: 'D1 binding not found on worker' };
+  }
+  const r = await cf(`/accounts/${S.accountId}/d1/database`, {
+    method:'POST', body: JSON.stringify({ name: S.dbName })
+  });
+  if (r.success && r.result) {
+    S.dbId = r.result.uuid || r.result.id;
+    log('D1 created · ' + S.dbName, 'ok');
+    return { ok:true };
+  }
+  return { ok:false, msg: r.errors?.[0]?.message || t('eD1') };
+}
+
+async function deploy(){
+  const metadata = {
+    main_module: REPO.module,
+    compatibility_date: '2024-09-23',
+    compatibility_flags: ['nodejs_compat'],
+    bindings: [{ name: REPO.binding, type: 'd1', id: S.dbId }]
+  };
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify(metadata)], { type:'application/json' }));
+  form.append(REPO.module, new Blob([S.code], { type:'application/javascript+module' }), REPO.module);
+  const r = await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}`, {
+    method:'PUT', body: form
+  });
+  if (!r.success) return { ok:false, msg: r.errors?.[0]?.message || t('eDep') };
+  log('worker deployed · ' + S.workerName, 'ok');
+  return { ok:true };
+}
+
+async function enableUrl(){
+  const sub = await cf(`/accounts/${S.accountId}/workers/subdomain`);
+  if (sub.success && sub.result?.subdomain) S.subdomain = sub.result.subdomain;
+  try {
+    await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}/subdomain`, {
+      method:'POST', body: JSON.stringify({ enabled: true })
+    });
+  } catch(e) {}
+  S.url = S.subdomain
+    ? `https://${S.workerName}.${S.subdomain}.workers.dev`
+    : `https://${S.workerName}.workers.dev`;
+  log('url · ' + S.url, 'ok');
+  return { ok:true };
+}
+
+function copyUrl(){
+  const u = document.getElementById('panelUrl').href;
+  navigator.clipboard.writeText(u).then(()=>alert(lang==='fa'?'کپی شد':'Copied')).catch(()=>prompt('URL', u));
+}
+
+async function run(){
+  S.workerName = document.getElementById('workerName').value.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
+  S.dbName = document.getElementById('dbName').value.trim() || 'leviko-db';
+  S.proxy = document.getElementById('proxyUrl').value.trim();
+  if (!S.workerName || S.workerName.length < 2) { err('e2', t('eName')); return; }
+  hide('e2'); hide('e3');
+  show(3);
+  document.getElementById('win').classList.remove('show');
+  document.getElementById('btnRetry').style.display = 'none';
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('log').classList.remove('show');
+  ['account','code','d1','worker','url','done'].forEach(s => setStep(s,''));
+
+  try {
+    setStep('account','run');
+    const a = await account();
+    if (!a.ok) throw new Error(a.msg || t('eAcc'));
+    setStep('account','ok');
+
+    setStep('code','run');
+    const c = await fetchCode();
+    if (!c.ok) throw new Error(c.msg || t('eCode'));
+    setStep('code','ok');
+
+    setStep('d1','run');
+    const d = await ensureD1();
+    if (!d.ok) throw new Error(d.msg || t('eD1'));
+    setStep('d1','ok');
+
+    setStep('worker','run');
+    const w = await deploy();
+    if (!w.ok) throw new Error(w.msg || t('eDep'));
+    setStep('worker','ok');
+
+    setStep('url','run');
+    await enableUrl();
+    setStep('url','ok');
+
+    setStep('done','run');
+    setStep('done','ok');
+
+    const link = S.url + REPO.panelPath;
+    document.getElementById('panelUrl').href = link;
+    document.getElementById('panelUrl').textContent = link;
+    document.getElementById('win').classList.add('show');
+  } catch(e) {
+    console.error(e);
+    err('e3', e.message || String(e));
+    log(String(e.message || e), 'err');
+    document.getElementById('btnRetry').style.display = 'block';
+    document.querySelectorAll('.dot.run').forEach(d => { d.className='dot fail'; d.textContent='✗'; });
+  }
+}
+
+applyLang();
+</script>
+</body>
+</html>
