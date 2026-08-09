@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrexBridge Installer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Vazirmatn:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #07090c;
+  --surface: #0e1218;
+  --surface2: #151b24;
+  --surface3: #1c2430;
+  --line: #243041;
+  --line2: #2f3d52;
+  --text: #edf2f7;
+  --muted: #8b9bb0;
+  --faint: #5a6b80;
+  --lime: #b8f54a;
+  --lime-dim: rgba(184,245,74,.12);
+  --lime-glow: rgba(184,245,74,.25);
+  --teal: #2dd4bf;
+  --orange: #fb923c;
+  --red: #f87171;
+  --red-dim: rgba(248,113,113,.12);
+  --ok: #4ade80;
+  --ok-dim: rgba(74,222,128,.12);
+  --radius: 18px;
+  --radius-sm: 12px;
+  --font: 'Vazirmatn', system-ui, sans-serif;
+  --font-en: 'Space Grotesk', system-ui, sans-serif;
+  --shadow: 0 20px 50px rgba(0,0,0,.45);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:15px;-webkit-tap-highlight-color:transparent}
+body{
+  min-height:100vh;font-family:var(--font);background:var(--bg);color:var(--text);
+  line-height:1.6;overflow-x:hidden;
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 80% 50% at 10% -10%,rgba(184,245,74,.08),transparent 55%),
+    radial-gradient(ellipse 60% 40% at 95% 10%,rgba(45,212,191,.06),transparent 50%),
+    radial-gradient(ellipse 50% 30% at 50% 110%,rgba(184,245,74,.04),transparent 45%);
+}
+body::after{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    linear-gradient(rgba(36,48,65,.35) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(36,48,65,.35) 1px,transparent 1px);
+  background-size:48px 48px;
+  mask-image:radial-gradient(ellipse 70% 60% at 50% 40%,black 20%,transparent 75%);
+}
+.wrap{position:relative;z-index:1;max-width:480px;margin:0 auto;padding:32px 18px 60px}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:36px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-mark{
+  width:40px;height:40px;border-radius:12px;
+  background:linear-gradient(145deg,#b8f54a 0%,#65a30d 100%);
+  display:grid;place-items:center;font-weight:800;font-size:1.1rem;color:#0a0f08;
+  box-shadow:0 0 24px var(--lime-glow);font-family:var(--font-en);
+}
+.brand-text{display:flex;flex-direction:column;line-height:1.15}
+.brand-text strong{font-size:1.05rem;font-weight:800;letter-spacing:-.02em}
+.brand-text span{font-size:.72rem;color:var(--muted);font-weight:500;font-family:var(--font-en);letter-spacing:.04em;text-transform:uppercase}
+.lang-btn{
+  background:var(--surface2);border:1px solid var(--line);color:var(--muted);
+  padding:7px 14px;border-radius:999px;font-family:var(--font-en);font-size:.78rem;font-weight:600;
+  cursor:pointer;transition:.2s;
+}
+.lang-btn:hover{border-color:var(--lime);color:var(--lime)}
+.hero{text-align:center;margin-bottom:28px}
+.hero h1{font-size:1.65rem;font-weight:800;letter-spacing:-.03em;margin-bottom:8px}
+.hero p{color:var(--muted);font-size:.92rem;max-width:340px;margin:0 auto}
+.rail{display:flex;gap:6px;margin-bottom:22px}
+.rail-seg{flex:1;height:4px;border-radius:99px;background:var(--surface3);transition:.35s}
+.rail-seg.on{background:var(--lime);box-shadow:0 0 12px var(--lime-glow)}
+.rail-seg.done{background:var(--ok)}
+.panel{display:none;animation:rise .35s ease}
+.panel.on{display:block}
+@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.card{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:24px 22px;box-shadow:var(--shadow);
+}
+.card-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.step-badge{
+  width:32px;height:32px;border-radius:10px;background:var(--lime-dim);color:var(--lime);
+  display:grid;place-items:center;font-weight:800;font-size:.9rem;font-family:var(--font-en);flex-shrink:0;
+}
+.card-head h2{font-size:1.05rem;font-weight:700}
+.card-head p{font-size:.8rem;color:var(--muted);margin-top:2px}
+label{display:block;font-size:.78rem;font-weight:600;color:var(--muted);margin-bottom:6px;letter-spacing:.02em}
+.field{margin-bottom:16px;position:relative}
+input[type=text],input[type=password]{
+  width:100%;padding:13px 14px;background:var(--surface2);border:1px solid var(--line);
+  border-radius:var(--radius-sm);color:var(--text);font-family:var(--font);font-size:.95rem;outline:none;transition:.2s;
+}
+input:focus{border-color:var(--lime);box-shadow:0 0 0 3px var(--lime-dim)}
+input::placeholder{color:var(--faint)}
+.eye{position:absolute;left:12px;top:34px;background:none;border:none;color:var(--faint);cursor:pointer;font-size:.95rem;padding:4px}
+.hint{font-size:.75rem;color:var(--faint);margin-top:5px}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;
+  padding:14px 20px;border:none;border-radius:var(--radius-sm);
+  font-family:var(--font);font-size:.95rem;font-weight:700;cursor:pointer;transition:.2s;
+}
+.btn-main{
+  background:linear-gradient(135deg,#c8ff5a 0%,#84cc16 55%,#4d7c0f 100%);
+  color:#0a1205;box-shadow:0 6px 24px var(--lime-glow);
+}
+.btn-main:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.btn-main:disabled{opacity:.45;cursor:not-allowed;transform:none;filter:none}
+.btn-ghost{background:transparent;border:1px solid var(--line);color:var(--muted);margin-top:10px}
+.btn-ghost:hover{border-color:var(--lime);color:var(--lime)}
+.btn-outline{background:transparent;border:1px dashed var(--line2);color:var(--teal);margin-bottom:16px}
+.btn-outline:hover{border-color:var(--teal);background:rgba(45,212,191,.06)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.chip{font-size:.72rem;font-weight:600;color:var(--muted);background:var(--surface2);border:1px solid var(--line);padding:5px 11px;border-radius:999px}
+.chip b{color:var(--lime);margin-left:4px}
+.adv-link{font-size:.78rem;color:var(--faint);cursor:pointer;user-select:none;margin-bottom:12px;display:inline-flex;align-items:center;gap:6px}
+.adv-link:hover{color:var(--lime)}
+.adv-box{display:none;margin-bottom:8px}
+.adv-box.open{display:block}
+.plist{list-style:none}
+.plist li{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:.9rem}
+.plist li:last-child{border-bottom:none}
+.pdot{
+  width:26px;height:26px;border-radius:8px;background:var(--surface3);border:1px solid var(--line);
+  color:var(--faint);display:grid;place-items:center;font-size:.7rem;font-weight:800;font-family:var(--font-en);flex-shrink:0;transition:.25s;
+}
+.pdot.run{border-color:var(--orange);color:var(--orange);animation:blink 1s infinite}
+.pdot.ok{background:var(--ok-dim);border-color:var(--ok);color:var(--ok)}
+.pdot.fail{background:var(--red-dim);border-color:var(--red);color:var(--red)}
+@keyframes blink{50%{opacity:.35}}
+.success{display:none;margin-top:18px;padding:20px;background:var(--ok-dim);border:1px solid var(--ok);border-radius:var(--radius-sm);text-align:center}
+.success.show{display:block}
+.success .title{font-weight:800;font-size:1.05rem;margin-bottom:6px;color:var(--ok)}
+.success a{display:block;color:var(--lime);font-weight:700;word-break:break-all;font-size:.88rem;margin:10px 0 4px;text-decoration:none}
+.success a:hover{text-decoration:underline}
+.success .note{font-size:.78rem;color:var(--muted)}
+.err{display:none;margin:12px 0;padding:12px 14px;background:var(--red-dim);border:1px solid var(--red);border-radius:var(--radius-sm);color:var(--red);font-size:.85rem}
+.err.show{display:block}
+.footer{text-align:center;margin-top:28px;font-size:.75rem;color:var(--faint)}
+.footer a{color:var(--teal);text-decoration:none}
+@media(max-width:420px){.wrap{padding:24px 14px 48px}.hero h1{font-size:1.4rem}.card{padding:20px 16px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">T</div>
+      <div class="brand-text">
+        <strong>TrexBridge</strong>
+        <span>Installer</span>
+      </div>
+    </div>
+    <button class="lang-btn" id="langBtn" onclick="toggleLang()">EN</button>
+  </div>
+
+  <div class="hero">
+    <h1 id="t-title">نصب پنل در چند کلیک</h1>
+    <p id="t-sub">استقرار خودکار TrexBridge روی Cloudflare Workers بدون تنظیم دستی</p>
+  </div>
+
+  <div class="rail" id="rail">
+    <div class="rail-seg on" data-r="1"></div>
+    <div class="rail-seg" data-r="2"></div>
+    <div class="rail-seg" data-r="3"></div>
+  </div>
+
+  <div class="panel on" id="panel1">
+    <div class="card">
+      <div class="card-head">
+        <div class="step-badge">1</div>
+        <div>
+          <h2 id="t-s1">توکن API</h2>
+          <p id="t-s1d">دسترسی به حساب کلودفلر برای ساخت Worker و D1</p>
+        </div>
+      </div>
+      <a class="btn btn-outline" id="tokenLink"
+         href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%5D&name=TrexBridge-Installer"
+         target="_blank" rel="noopener">
+        🔑 <span id="t-create">ساخت توکن در Cloudflare</span>
+      </a>
+      <div class="field">
+        <label id="t-tokLabel">API Token</label>
+        <input type="password" id="apiToken" placeholder="••••••••••••••••••••••••" autocomplete="off">
+        <button type="button" class="eye" onclick="toggleEye()" title="show/hide">👁</button>
+        <div class="hint" id="t-tokHint">توکن فقط یک‌بار دیده می‌شود — سریع کپی کن</div>
+      </div>
+      <div class="err" id="err1"></div>
+      <button class="btn btn-main" onclick="go2()"><span id="t-next">ادامه</span></button>
+    </div>
+    <div class="chips">
+      <div class="chip"><b>D1</b> auto</div>
+      <div class="chip"><b>Worker</b> deploy</div>
+      <div class="chip"><b>DB</b> binding</div>
+      <div class="chip"><b>workers.dev</b></div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel2">
+    <div class="card">
+      <div class="card-head">
+        <div class="step-badge">2</div>
+        <div>
+          <h2 id="t-s2">تنظیمات استقرار</h2>
+          <p id="t-s2d">نام Worker و دیتابیس را مشخص کن</p>
+        </div>
+      </div>
+      <div class="field">
+        <label id="t-wLabel">نام Worker</label>
+        <input type="text" id="workerName" value="trexbridge" placeholder="trexbridge">
+        <div class="hint" id="t-wHint">فقط حروف کوچک انگلیسی، عدد و خط تیره</div>
+      </div>
+      <div class="field">
+        <label id="t-dLabel">نام دیتابیس D1</label>
+        <input type="text" id="dbName" value="trexbridge-db" placeholder="trexbridge-db">
+      </div>
+      <div class="adv-link" onclick="document.getElementById('adv').classList.toggle('open')">
+        ⚙️ <span id="t-adv">پیشرفته</span>
+      </div>
+      <div class="adv-box" id="adv">
+        <div class="field">
+          <label id="t-pLabel">آدرس Proxy (CORS)</label>
+          <input type="text" id="proxyUrl" placeholder="خالی = پیش‌فرض / مستقیم">
+          <div class="hint" id="t-pHint">اگر خطای CORS دیدی، پروکسی خودت را Deploy کن</div>
+        </div>
+      </div>
+      <div class="err" id="err2"></div>
+      <button class="btn btn-main" id="btnGo" onclick="runDeploy()">🚀 <span id="t-deploy">شروع استقرار</span></button>
+      <button class="btn btn-ghost" onclick="go1()">← <span id="t-back">بازگشت</span></button>
+    </div>
+  </div>
+
+  <div class="panel" id="panel3">
+    <div class="card">
+      <div class="card-head">
+        <div class="step-badge">3</div>
+        <div>
+          <h2 id="t-s3">در حال نصب</h2>
+          <p id="t-s3d">صفحه را باز نگه دار</p>
+        </div>
+      </div>
+      <ul class="plist" id="plist">
+        <li data-s="account"><span class="pdot">1</span><span id="t-p1">بررسی حساب</span></li>
+        <li data-s="code"><span class="pdot">2</span><span id="t-p2">دانلود کد پنل</span></li>
+        <li data-s="d1"><span class="pdot">3</span><span id="t-p3">ساخت دیتابیس D1</span></li>
+        <li data-s="worker"><span class="pdot">4</span><span id="t-p4">استقرار Worker</span></li>
+        <li data-s="url"><span class="pdot">5</span><span id="t-p5">فعال‌سازی workers.dev</span></li>
+        <li data-s="verify"><span class="pdot">6</span><span id="t-p6">تأیید نهایی</span></li>
+      </ul>
+      <div class="err" id="err3"></div>
+      <div class="success" id="okBox">
+        <div class="title" id="t-ok">نصب کامل شد</div>
+        <div style="font-size:.82rem;color:var(--muted)" id="t-okLink">لینک پنل</div>
+        <a id="panelUrl" href="#" target="_blank" rel="noopener"></a>
+        <div class="note" id="t-okNote">اولین ورود: رمز پنل را خودت انتخاب می‌کنی</div>
+        <button class="btn btn-main" style="margin-top:14px" onclick="window.open(document.getElementById('panelUrl').href,'_blank')">
+          🦖 <span id="t-open">ورود به پنل</span>
+        </button>
+      </div>
+      <button class="btn btn-ghost" id="btnRetry" style="display:none" onclick="runDeploy()">🔄 <span id="t-retry">تلاش دوباره</span></button>
+    </div>
+  </div>
+
+  <div class="footer">
+    TrexBridge · <a href="https://github.com/icubaby/TrexBridgePanel" target="_blank" rel="noopener">Source Panel</a>
+  </div>
+</div>
+
+<script>
+const I18N={
+  fa:{
+    title:'نصب پنل در چند کلیک',sub:'استقرار خودکار TrexBridge روی Cloudflare Workers بدون تنظیم دستی',
+    s1:'توکن API',s1d:'دسترسی به حساب کلودفلر برای ساخت Worker و D1',
+    create:'ساخت توکن در Cloudflare',tokLabel:'API Token',tokHint:'توکن فقط یک‌بار دیده می‌شود — سریع کپی کن',
+    next:'ادامه',s2:'تنظیمات استقرار',s2d:'نام Worker و دیتابیس را مشخص کن',
+    wLabel:'نام Worker',wHint:'فقط حروف کوچک انگلیسی، عدد و خط تیره',dLabel:'نام دیتابیس D1',
+    adv:'پیشرفته',pLabel:'آدرس Proxy (CORS)',pHint:'اگر خطای CORS دیدی، پروکسی خودت را Deploy کن',
+    deploy:'شروع استقرار',back:'بازگشت',s3:'در حال نصب',s3d:'صفحه را باز نگه دار',
+    p1:'بررسی حساب',p2:'دانلود کد پنل',p3:'ساخت دیتابیس D1',p4:'استقرار Worker',p5:'فعال‌سازی workers.dev',p6:'تأیید نهایی',
+    ok:'نصب کامل شد',okLink:'لینک پنل',okNote:'اولین ورود: رمز پنل را خودت انتخاب می‌کنی',open:'ورود به پنل',retry:'تلاش دوباره',
+    eToken:'توکن را وارد کن',eWorker:'نام Worker نامعتبر است',eAccount:'خطا در دریافت حساب',eCode:'خطا در دانلود کد',
+    eD1:'خطا در ساخت دیتابیس',eDeploy:'خطا در استقرار Worker'
+  },
+  en:{
+    title:'Deploy in a few clicks',sub:'Automated TrexBridge setup on Cloudflare Workers — no manual config',
+    s1:'API Token',s1d:'Access to create Worker and D1 on your account',
+    create:'Create token on Cloudflare',tokLabel:'API Token',tokHint:'Token is shown only once — copy it now',
+    next:'Continue',s2:'Deploy settings',s2d:'Choose Worker and database names',
+    wLabel:'Worker name',wHint:'lowercase letters, numbers, hyphens only',dLabel:'D1 database name',
+    adv:'Advanced',pLabel:'Proxy URL (CORS)',pHint:'If you hit CORS errors, host your own proxy',
+    deploy:'Start deploy',back:'Back',s3:'Installing',s3d:'Keep this page open',
+    p1:'Verify account',p2:'Download panel code',p3:'Create D1 database',p4:'Deploy Worker',p5:'Enable workers.dev',p6:'Final check',
+    ok:'Install complete',okLink:'Panel URL',okNote:'First visit: set your own panel password',open:'Open panel',retry:'Retry',
+    eToken:'Enter API token',eWorker:'Invalid worker name',eAccount:'Failed to load account',eCode:'Failed to download code',
+    eD1:'Failed to create database',eDeploy:'Failed to deploy Worker'
+  }
+};
+let lang='fa';
+const state={apiToken:'',accountId:'',workerName:'trexbridge',dbName:'trexbridge-db',dbId:'',workerCode:'',deployUrl:'',subdomain:'',proxyUrl:''};
+const SCRIPT_SOURCES=[
+  'https://cdn.jsdelivr.net/gh/icubaby/TrexBridgePanel@main/Panel.js',
+  'https://raw.githubusercontent.com/icubaby/TrexBridgePanel/refs/heads/main/Panel.js',
+  'https://api.github.com/repos/icubaby/TrexBridgePanel/contents/Panel.js?ref=main'
+];
+const MODULE='index.js';
+function t(k){return I18N[lang][k]||k}
+function applyLang(){
+  document.documentElement.lang=lang;
+  document.documentElement.dir=lang==='fa'?'rtl':'ltr';
+  document.getElementById('langBtn').textContent=lang==='fa'?'EN':'FA';
+  const map={'t-title':'title','t-sub':'sub','t-s1':'s1','t-s1d':'s1d','t-create':'create','t-tokLabel':'tokLabel','t-tokHint':'tokHint','t-next':'next','t-s2':'s2','t-s2d':'s2d','t-wLabel':'wLabel','t-wHint':'wHint','t-dLabel':'dLabel','t-adv':'adv','t-pLabel':'pLabel','t-pHint':'pHint','t-deploy':'deploy','t-back':'back','t-s3':'s3','t-s3d':'s3d','t-p1':'p1','t-p2':'p2','t-p3':'p3','t-p4':'p4','t-p5':'p5','t-p6':'p6','t-ok':'ok','t-okLink':'okLink','t-okNote':'okNote','t-open':'open','t-retry':'retry'};
+  for(const[id,key] of Object.entries(map)){const el=document.getElementById(id);if(el)el.textContent=t(key)}
+}
+function toggleLang(){lang=lang==='fa'?'en':'fa';applyLang()}
+function toggleEye(){const i=document.getElementById('apiToken');i.type=i.type==='password'?'text':'password'}
+function setRail(n){document.querySelectorAll('.rail-seg').forEach(s=>{const r=+s.dataset.r;s.classList.remove('on','done');if(r<n)s.classList.add('done');if(r===n)s.classList.add('on')})}
+function showPanel(n){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));document.getElementById('panel'+n).classList.add('on');setRail(n)}
+function go1(){showPanel(1)}
+function go2(){const tok=document.getElementById('apiToken').value.trim();if(!tok||tok.length<20){showErr('err1',t('eToken'));return}state.apiToken=tok;hideErr('err1');showPanel(2)}
+function showErr(id,msg){const e=document.getElementById(id);e.textContent=msg;e.classList.add('show')}
+function hideErr(id){const e=document.getElementById(id);e.textContent='';e.classList.remove('show')}
+function setStep(name,st){const li=document.querySelector(`[data-s="${name}"]`);if(!li)return;const d=li.querySelector('.pdot');d.className='pdot'+(st?' '+st:'');if(st==='ok')d.textContent='✓';else if(st==='fail')d.textContent='✗';else if(st==='run')d.textContent='…'}
+async function cfFetch(path,opts={}){
+  const proxy=state.proxyUrl;
+  const headers={Authorization:'Bearer '+state.apiToken,...(opts.headers||{})};
+  if(proxy){
+    headers['X-Proxy-Target']=path;
+    const res=await fetch(proxy,{method:opts.method||'GET',headers,body:opts.body});
+    const text=await res.text();let data;try{data=JSON.parse(text)}catch{data={success:false,errors:[{message:text}]}}data._status=res.status;return data;
+  }
+  const res=await fetch('https://api.cloudflare.com/client/v4'+path,{
+    method:opts.method||'GET',
+    headers:{...headers,...(opts.body&&!(opts.body instanceof FormData)?{'Content-Type':'application/json'}:{})},
+    body:opts.body
+  });
+  const text=await res.text();let data;try{data=JSON.parse(text)}catch{data={success:false,errors:[{message:text}]}}data._status=res.status;return data;
+}
+async function fetchCode(){
+  const proxy=state.proxyUrl;const sources=[];
+  if(proxy)sources.push({via:true,url:proxy.replace(/\/$/,'')+'/github',gh:SCRIPT_SOURCES[1]});
+  SCRIPT_SOURCES.forEach(u=>sources.push({via:false,url:u}));
+  const errs=[];
+  for(const s of sources){
+    try{
+      const opts=s.via?{headers:{'X-GitHub-Url':s.gh}}:{};
+      const res=await fetch(s.url,opts);if(!res.ok){errs.push('HTTP '+res.status);continue}
+      let code;
+      if(s.url.includes('api.github.com')){const j=await res.json();const bin=atob(j.content.replace(/\n/g,''));const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);code=new TextDecoder().decode(bytes)}
+      else code=await res.text();
+      if(!code||code.length<5000){errs.push('small');continue}
+      if(!code.includes('export default')&&!code.includes('__WORKER_EXPORT__')){errs.push('invalid');continue}
+      state.workerCode=code;return{ok:true};
+    }catch(e){errs.push(e.message)}
+  }
+  return{ok:false,msg:errs.join(' | ')};
+}
+async function getAccount(){
+  const r=await cfFetch('/accounts');
+  if(r.success&&r.result?.length){state.accountId=r.result[0].id;return{ok:true}}
+  return{ok:false,msg:r.errors?.[0]?.message||t('eAccount')};
+}
+async function ensureD1(){
+  const list=await cfFetch(`/accounts/${state.accountId}/d1/database`);
+  if(list.success&&list.result){const f=list.result.find(d=>d.name===state.dbName);if(f){state.dbId=f.uuid||f.id;return{ok:true}}}
+  const r=await cfFetch(`/accounts/${state.accountId}/d1/database`,{method:'POST',body:JSON.stringify({name:state.dbName})});
+  if(r.success&&r.result){state.dbId=r.result.uuid||r.result.id;return{ok:true}}
+  return{ok:false,msg:r.errors?.[0]?.message||t('eD1')};
+}
+async function deployWorker(){
+  const metadata={main_module:MODULE,compatibility_date:'2024-09-23',compatibility_flags:['nodejs_compat'],bindings:[{name:'DB',type:'d1',id:state.dbId}]};
+  const form=new FormData();
+  form.append('metadata',new Blob([JSON.stringify(metadata)],{type:'application/json'}));
+  form.append(MODULE,new Blob([state.workerCode],{type:'application/javascript+module'}),MODULE);
+  const r=await cfFetch(`/accounts/${state.accountId}/workers/scripts/${encodeURIComponent(state.workerName)}`,{method:'PUT',body:form});
+  if(!r.success)return{ok:false,msg:r.errors?.[0]?.message||t('eDeploy')};
+  return{ok:true};
+}
+async function enableUrl(){
+  const sub=await cfFetch(`/accounts/${state.accountId}/workers/subdomain`);
+  if(sub.success&&sub.result?.subdomain)state.subdomain=sub.result.subdomain;
+  try{await cfFetch(`/accounts/${state.accountId}/workers/scripts/${encodeURIComponent(state.workerName)}/subdomain`,{method:'POST',body:JSON.stringify({enabled:true})})}catch(e){}
+  state.deployUrl=state.subdomain?`https://${state.workerName}.${state.subdomain}.workers.dev`:`https://${state.workerName}.workers.dev`;
+  return{ok:true};
+}
+async function runDeploy(){
+  state.workerName=document.getElementById('workerName').value.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
+  state.dbName=document.getElementById('dbName').value.trim()||'trexbridge-db';
+  state.proxyUrl=document.getElementById('proxyUrl').value.trim();
+  if(!state.workerName||state.workerName.length<2){showErr('err2',t('eWorker'));return}
+  hideErr('err2');hideErr('err3');showPanel(3);
+  document.getElementById('okBox').classList.remove('show');
+  document.getElementById('btnRetry').style.display='none';
+  ['account','code','d1','worker','url','verify'].forEach(s=>setStep(s,''));
+  try{
+    setStep('account','run');const a=await getAccount();if(!a.ok)throw new Error(a.msg||t('eAccount'));setStep('account','ok');
+    setStep('code','run');const c=await fetchCode();if(!c.ok)throw new Error(c.msg||t('eCode'));setStep('code','ok');
+    setStep('d1','run');const d=await ensureD1();if(!d.ok)throw new Error(d.msg||t('eD1'));setStep('d1','ok');
+    setStep('worker','run');const w=await deployWorker();if(!w.ok)throw new Error(w.msg||t('eDeploy'));setStep('worker','ok');
+    setStep('url','run');await enableUrl();setStep('url','ok');
+    setStep('verify','run');setStep('verify','ok');
+    const link=state.deployUrl+'/panel';
+    document.getElementById('panelUrl').href=link;
+    document.getElementById('panelUrl').textContent=link;
+    document.getElementById('okBox').classList.add('show');
+  }catch(e){
+    console.error(e);showErr('err3',e.message||String(e));
+    document.getElementById('btnRetry').style.display='block';
+    document.querySelectorAll('.pdot.run').forEach(d=>{d.className='pdot fail';d.textContent='✗'});
+  }
+}
+applyLang();
+</script>
+</body>
+</html>
