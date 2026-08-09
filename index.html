@@ -6,207 +6,95 @@
 <title>Leviko Installer</title>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&family=Vazirmatn:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
-:root{
-  --bg:#050508;--bg2:#0a0a12;--card:rgba(18,18,32,.85);--line:rgba(255,255,255,.08);
-  --txt:#f2f0ff;--mut:#9b97b8;--faint:#5c5878;--p:#8b5cf6;--p2:#a78bfa;--p3:#c4b5fd;
-  --glow:rgba(139,92,246,.4);--ok:#34d399;--okbg:rgba(52,211,153,.12);
-  --warn:#fbbf24;--err:#f87171;--errbg:rgba(248,113,113,.12);
-  --r:20px;--rs:12px;--font:'Vazirmatn',system-ui,sans-serif;--en:'Outfit',system-ui,sans-serif;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-body{min-height:100vh;font-family:var(--font);background:var(--bg);color:var(--txt);line-height:1.6}
-body::before{content:'';position:fixed;inset:0;pointer-events:none;background:
-  radial-gradient(ellipse 70% 45% at 15% -5%,rgba(124,58,237,.18),transparent 55%),
-  radial-gradient(ellipse 50% 35% at 95% 90%,rgba(91,33,182,.12),transparent 50%)}
+:root{--bg:#050508;--bg2:#0a0a12;--card:rgba(18,18,32,.88);--line:rgba(255,255,255,.08);--txt:#f2f0ff;--mut:#9b97b8;--faint:#5c5878;--p:#8b5cf6;--p2:#a78bfa;--p3:#c4b5fd;--glow:rgba(139,92,246,.4);--ok:#34d399;--okbg:rgba(52,211,153,.12);--warn:#fbbf24;--err:#f87171;--errbg:rgba(248,113,113,.12);--r:20px;--rs:12px;--font:'Vazirmatn',system-ui,sans-serif;--en:'Outfit',system-ui,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}body{min-height:100vh;font-family:var(--font);background:var(--bg);color:var(--txt);line-height:1.6}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 70% 45% at 15% -5%,rgba(124,58,237,.18),transparent 55%),radial-gradient(ellipse 50% 35% at 95% 90%,rgba(91,33,182,.12),transparent 50%)}
 .shell{position:relative;z-index:1;max-width:520px;margin:0 auto;padding:28px 16px 64px}
 .hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
 .logo{display:flex;align-items:center;gap:12px}
-.mark{width:46px;height:46px;border-radius:14px;background:linear-gradient(145deg,#c4b5fd,#7c3aed);
-  display:grid;place-items:center;font-family:var(--en);font-weight:800;font-size:1.2rem;color:#fff;
-  box-shadow:0 10px 28px var(--glow);transform:perspective(400px) rotateY(-10deg) rotateX(6deg)}
-.logo strong{display:block;font-size:1.1rem;font-weight:800}
-.logo span{font-family:var(--en);font-size:.68rem;color:var(--mut);letter-spacing:.1em;text-transform:uppercase}
-.lang{background:var(--bg2);border:1px solid var(--line);color:var(--mut);padding:7px 14px;border-radius:999px;
-  font-family:var(--en);font-size:.78rem;font-weight:600;cursor:pointer}
-.lang:hover{border-color:var(--p);color:var(--p2)}
-.hero{text-align:center;margin-bottom:22px}
-.hero h1{font-size:1.55rem;font-weight:800;margin-bottom:6px;
-  background:linear-gradient(135deg,#fff,var(--p3));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.hero p{color:var(--mut);font-size:.9rem}
-.rail{display:flex;gap:6px;margin-bottom:18px}
-.rail i{flex:1;height:4px;border-radius:99px;background:rgba(255,255,255,.06);transition:.35s}
-.rail i.on{background:linear-gradient(90deg,var(--p),var(--p2));box-shadow:0 0 12px var(--glow)}
-.rail i.done{background:var(--ok)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:24px 20px;
-  backdrop-filter:blur(20px);box-shadow:0 20px 50px rgba(0,0,0,.4)}
+.mark{width:46px;height:46px;border-radius:14px;background:linear-gradient(145deg,#c4b5fd,#7c3aed);display:grid;place-items:center;font-family:var(--en);font-weight:800;font-size:1.2rem;color:#fff;box-shadow:0 10px 28px var(--glow);transform:perspective(400px) rotateY(-10deg) rotateX(6deg)}
+.logo strong{display:block;font-size:1.1rem;font-weight:800}.logo span{font-family:var(--en);font-size:.68rem;color:var(--mut);letter-spacing:.1em;text-transform:uppercase}
+.lang{background:var(--bg2);border:1px solid var(--line);color:var(--mut);padding:7px 14px;border-radius:999px;font-family:var(--en);font-size:.78rem;font-weight:600;cursor:pointer}
+.hero{text-align:center;margin-bottom:22px}.hero h1{font-size:1.55rem;font-weight:800;margin-bottom:6px;background:linear-gradient(135deg,#fff,var(--p3));-webkit-background-clip:text;-webkit-text-fill-color:transparent}.hero p{color:var(--mut);font-size:.9rem}
+.rail{display:flex;gap:6px;margin-bottom:18px}.rail i{flex:1;height:4px;border-radius:99px;background:rgba(255,255,255,.06)}.rail i.on{background:linear-gradient(90deg,var(--p),var(--p2));box-shadow:0 0 12px var(--glow)}.rail i.done{background:var(--ok)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:24px 20px;backdrop-filter:blur(20px);box-shadow:0 20px 50px rgba(0,0,0,.4)}
 .ch{display:flex;gap:12px;align-items:flex-start;margin-bottom:18px}
-.badge{width:34px;height:34px;border-radius:10px;flex-shrink:0;background:rgba(139,92,246,.15);
-  border:1px solid rgba(139,92,246,.35);color:var(--p2);display:grid;place-items:center;
-  font-family:var(--en);font-weight:800;font-size:.9rem}
-.ch h2{font-size:1.05rem;font-weight:800}
-.ch p{font-size:.8rem;color:var(--mut);margin-top:2px}
+.badge{width:34px;height:34px;border-radius:10px;flex-shrink:0;background:rgba(139,92,246,.15);border:1px solid rgba(139,92,246,.35);color:var(--p2);display:grid;place-items:center;font-family:var(--en);font-weight:800}
+.ch h2{font-size:1.05rem;font-weight:800}.ch p{font-size:.8rem;color:var(--mut);margin-top:2px}
 label{display:block;font-size:.76rem;font-weight:600;color:var(--mut);margin-bottom:6px}
 .field{margin-bottom:14px;position:relative}
-input{width:100%;padding:12px 14px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rs);
-  color:var(--txt);font-family:var(--font);font-size:.94rem;outline:none}
+input{width:100%;padding:12px 14px;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rs);color:var(--txt);font-family:var(--font);font-size:.94rem;outline:none}
 input:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(139,92,246,.18)}
 .hint{font-size:.73rem;color:var(--faint);margin-top:5px}
 .eye{position:absolute;left:10px;top:32px;background:none;border:none;cursor:pointer;font-size:1rem;color:var(--faint)}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:13px 18px;
-  border:none;border-radius:var(--rs);font-family:var(--font);font-size:.94rem;font-weight:700;cursor:pointer;transition:.2s}
-.btn-p{background:linear-gradient(135deg,#a78bfa,#7c3aed);color:#fff;box-shadow:0 8px 24px var(--glow)}
-.btn-p:hover{filter:brightness(1.08)}
-.btn-p:disabled{opacity:.45;cursor:not-allowed}
-.btn-g{background:transparent;border:1px solid var(--line);color:var(--mut);margin-top:10px}
-.btn-g:hover{border-color:var(--p);color:var(--p2)}
-.btn-s{background:rgba(139,92,246,.1);border:1px dashed rgba(139,92,246,.4);color:var(--p2);margin-bottom:14px}
-.btn-s:hover{background:rgba(139,92,246,.16)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:13px 18px;border:none;border-radius:var(--rs);font-family:var(--font);font-size:.94rem;font-weight:700;cursor:pointer;transition:.2s}
+.btn-p{background:linear-gradient(135deg,#a78bfa,#7c3aed);color:#fff;box-shadow:0 8px 24px var(--glow)}.btn-p:hover{filter:brightness(1.08)}.btn-p:disabled{opacity:.45;cursor:not-allowed}
+.btn-g{background:transparent;border:1px solid var(--line);color:var(--mut);margin-top:10px}.btn-g:hover{border-color:var(--p);color:var(--p2)}
+.btn-s{background:rgba(139,92,246,.1);border:1px dashed rgba(139,92,246,.4);color:var(--p2);margin-bottom:12px}
 .modes{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
-.mode{padding:11px;text-align:center;border-radius:var(--rs);border:1px solid var(--line);background:var(--bg2);
-  cursor:pointer;font-size:.84rem;font-weight:600;color:var(--mut)}
-.mode.on{border-color:var(--p);color:var(--p2);background:rgba(139,92,246,.1)}
-.mode small{display:block;font-size:.7rem;font-weight:500;color:var(--faint);margin-top:2px}
-.panel{display:none;animation:up .3s ease}
-.panel.on{display:block}
-@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-.plist{list-style:none}
-.plist li{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:.9rem}
-.plist li:last-child{border-bottom:none}
-.dot{width:26px;height:26px;border-radius:8px;flex-shrink:0;background:rgba(255,255,255,.04);border:1px solid var(--line);
-  color:var(--faint);display:grid;place-items:center;font-family:var(--en);font-size:.7rem;font-weight:800}
-.dot.run{border-color:var(--warn);color:var(--warn);animation:blink 1s infinite}
-.dot.ok{background:var(--okbg);border-color:var(--ok);color:var(--ok)}
-.dot.fail{background:var(--errbg);border-color:var(--err);color:var(--err)}
-@keyframes blink{50%{opacity:.35}}
-.log{margin-top:12px;max-height:140px;overflow-y:auto;padding:10px;border-radius:10px;background:#000;
-  border:1px solid var(--line);font-family:ui-monospace,monospace;font-size:.7rem;color:var(--faint);display:none}
-.log.show{display:block}
-.log .ok{color:var(--ok)}
-.log .err{color:var(--err)}
-.err{display:none;margin:12px 0;padding:12px;background:var(--errbg);border:1px solid rgba(248,113,113,.35);
-  border-radius:var(--rs);color:var(--err);font-size:.85rem;white-space:pre-wrap}
-.err.show{display:block}
-.win{display:none;margin-top:16px;padding:20px;background:var(--okbg);border:1px solid rgba(52,211,153,.35);
-  border-radius:var(--rs);text-align:center}
-.win.show{display:block}
-.win h3{color:var(--ok);font-weight:800;margin-bottom:6px}
-.win a{display:block;color:var(--p3);font-weight:700;word-break:break-all;font-size:.86rem;margin:10px 0;text-decoration:none}
-.note{font-size:.78rem;color:var(--mut)}
-.box{margin-top:14px;padding:14px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid var(--line);font-size:.82rem;color:var(--mut)}
-.box b{color:var(--p3)}
-.box ol{margin:8px 0 0 18px}
-.box li{margin-bottom:4px}
-.foot{text-align:center;margin-top:24px;font-size:.75rem;color:var(--faint)}
-.foot a{color:var(--p2);text-decoration:none}
-code{background:rgba(139,92,246,.12);padding:1px 6px;border-radius:4px;font-size:.8em;color:var(--p3)}
-pre.copybox{background:#000;border:1px solid var(--line);border-radius:10px;padding:12px;font-size:.68rem;
-  overflow-x:auto;max-height:100px;color:var(--faint);margin:10px 0;direction:ltr;text-align:left;white-space:pre-wrap}
+.mode{padding:11px;text-align:center;border-radius:var(--rs);border:1px solid var(--line);background:var(--bg2);cursor:pointer;font-size:.84rem;font-weight:600;color:var(--mut)}
+.mode.on{border-color:var(--p);color:var(--p2);background:rgba(139,92,246,.1)}.mode small{display:block;font-size:.7rem;color:var(--faint);margin-top:2px}
+.panel{display:none;animation:up .3s ease}.panel.on{display:block}@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.plist{list-style:none}.plist li{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:.9rem}.plist li:last-child{border-bottom:none}
+.dot{width:26px;height:26px;border-radius:8px;flex-shrink:0;background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--faint);display:grid;place-items:center;font-family:var(--en);font-size:.7rem;font-weight:800}
+.dot.run{border-color:var(--warn);color:var(--warn);animation:blink 1s infinite}.dot.ok{background:var(--okbg);border-color:var(--ok);color:var(--ok)}.dot.fail{background:var(--errbg);border-color:var(--err);color:var(--err)}@keyframes blink{50%{opacity:.35}}
+.log{margin-top:12px;max-height:140px;overflow-y:auto;padding:10px;border-radius:10px;background:#000;border:1px solid var(--line);font-family:ui-monospace,monospace;font-size:.7rem;color:var(--faint);display:none}.log.show{display:block}.log .ok{color:var(--ok)}.log .err{color:var(--err)}
+.err{display:none;margin:12px 0;padding:12px;background:var(--errbg);border:1px solid rgba(248,113,113,.35);border-radius:var(--rs);color:var(--err);font-size:.85rem;white-space:pre-wrap}.err.show{display:block}
+.win{display:none;margin-top:16px;padding:20px;background:var(--okbg);border:1px solid rgba(52,211,153,.35);border-radius:var(--rs);text-align:center}.win.show{display:block}
+.win h3{color:var(--ok);font-weight:800;margin-bottom:6px}.win a{display:block;color:var(--p3);font-weight:700;word-break:break-all;font-size:.86rem;margin:10px 0;text-decoration:none}.note{font-size:.78rem;color:var(--mut)}
+.conn{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid var(--line);margin-bottom:14px;font-size:.85rem}
+.conn .sp{width:16px;height:16px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--p2);border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+.feats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}.feat{padding:12px;border-radius:12px;background:rgba(255,255,255,.02);border:1px solid var(--line);font-size:.78rem;color:var(--mut)}.feat b{color:var(--p3);display:block;margin-bottom:2px}
+.foot{text-align:center;margin-top:24px;font-size:.75rem;color:var(--faint)}.foot a{color:var(--p2);text-decoration:none}
 </style>
 </head>
 <body>
 <div class="shell">
   <div class="hdr">
-    <div class="logo">
-      <div class="mark">L</div>
-      <div><strong>Leviko</strong><span>Installer</span></div>
-    </div>
+    <div class="logo"><div class="mark">L</div><div><strong>Leviko</strong><span>Installer</span></div></div>
     <button class="lang" id="langBtn" onclick="toggleLang()">EN</button>
   </div>
-
-  <div class="hero">
-    <h1 id="t-title">نصب خودکار لویکو</h1>
-    <p id="t-sub">استقرار پنل روی Cloudflare Workers</p>
-  </div>
+  <div class="hero"><h1 id="t-title">نصب خودکار لویکو</h1><p id="t-sub">استقرار پنل روی Cloudflare با یک توکن</p></div>
   <div class="rail" id="rail"><i class="on" data-r="1"></i><i data-r="2"></i><i data-r="3"></i></div>
 
-  <!-- STEP 1: Proxy + Token -->
   <div class="panel on" id="p1">
     <div class="card">
-      <div class="ch">
-        <div class="badge">1</div>
-        <div>
-          <h2 id="t-s1">اتصال</h2>
-          <p id="t-s1d">پروکسی + توکن API کلودفلر</p>
-        </div>
-      </div>
-
-      <div class="box" id="proxyHelp">
-        <b id="t-why">چرا پروکسی لازم است؟</b>
-        <span id="t-whyD"> مرورگر به‌خاطر CORS نمی‌تواند مستقیم به API کلودفلر درخواست بزند. یک Worker کوچک به‌عنوان پل لازم است (یک‌بار).</span>
-        <ol id="t-steps">
-          <li>در Cloudflare یک Worker جدید بساز</li>
-          <li>کد زیر را پیست و Deploy کن</li>
-          <li>آدرس <code>*.workers.dev</code> را پایین وارد کن</li>
-        </ol>
-      </div>
-
-      <button class="btn btn-s" type="button" onclick="copyProxy()">📋 <span id="t-copyP">کپی کد پروکسی</span></button>
-      <pre class="copybox" id="proxySrc" style="display:none"></pre>
-
-      <div class="field">
-        <label id="t-pL">آدرس پروکسی (Worker)</label>
-        <input type="text" id="proxyUrl" placeholder="https://leviko-proxy.xxxx.workers.dev" dir="ltr" style="text-align:left">
-        <div class="hint" id="t-pH">مثال: https://my-proxy.username.workers.dev</div>
-      </div>
-
-      <a class="btn btn-s" id="tokenLink" target="_blank" rel="noopener"
-         href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%5D&name=Leviko-Installer">
-        🔑 <span id="t-create">ساخت توکن API</span>
-      </a>
-
-      <div class="field">
-        <label id="t-tokL">API Token</label>
+      <div class="ch"><div class="badge">1</div><div><h2 id="t-s1">توکن API</h2><p id="t-s1d">فقط یک توکن کافی است</p></div></div>
+      <div class="conn" id="connBox"><div class="sp"></div><span id="connTxt">در حال آماده‌سازی اتصال…</span></div>
+      <a class="btn btn-s" target="_blank" rel="noopener" href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%5D&name=Leviko-Installer">🔑 <span id="t-create">ساخت توکن آماده‌شده</span></a>
+      <div class="field"><label id="t-tokL">API Token</label>
         <input type="password" id="apiToken" placeholder="••••••••••••••••" autocomplete="off" dir="ltr" style="text-align:left">
         <button type="button" class="eye" onclick="toggleEye()">👁</button>
       </div>
-
       <div class="err" id="e1"></div>
-      <button class="btn btn-p" id="btnCheck" onclick="checkConn()">✓ <span id="t-check">بررسی و ادامه</span></button>
+      <button class="btn btn-p" id="btnNext" onclick="go2()" disabled><span id="t-next">ادامه</span></button>
+    </div>
+    <div class="feats">
+      <div class="feat"><b>D1</b><span id="t-f1">ساخت خودکار</span></div>
+      <div class="feat"><b>Worker</b><span id="t-f2">آپلود سورس</span></div>
+      <div class="feat"><b>Binding</b><span id="t-f3">متغیر DB</span></div>
+      <div class="feat"><b>URL</b><span id="t-f4">workers.dev</span></div>
     </div>
   </div>
 
-  <!-- STEP 2 -->
   <div class="panel" id="p2">
     <div class="card">
-      <div class="ch">
-        <div class="badge">2</div>
-        <div>
-          <h2 id="t-s2">پیکربندی</h2>
-          <p id="t-s2d">نام Worker و دیتابیس</p>
-        </div>
-      </div>
+      <div class="ch"><div class="badge">2</div><div><h2 id="t-s2">پیکربندی</h2><p id="t-s2d">نام Worker و دیتابیس</p></div></div>
       <div class="modes">
-        <div class="mode on" data-mode="install" onclick="setMode('install')">
-          <span id="t-m1">نصب تازه</span><small id="t-m1d">Worker + D1</small>
-        </div>
-        <div class="mode" data-mode="update" onclick="setMode('update')">
-          <span id="t-m2">بروزرسانی</span><small id="t-m2d">فقط کد</small>
-        </div>
+        <div class="mode on" data-mode="install" onclick="setMode('install')"><span id="t-m1">نصب تازه</span><small>Worker + D1</small></div>
+        <div class="mode" data-mode="update" onclick="setMode('update')"><span id="t-m2">بروزرسانی</span><small>فقط کد</small></div>
       </div>
-      <div class="field">
-        <label id="t-wL">نام Worker</label>
-        <input type="text" id="workerName" value="leviko" dir="ltr" style="text-align:left">
-      </div>
-      <div class="field" id="dbField">
-        <label id="t-dL">نام دیتابیس D1</label>
-        <input type="text" id="dbName" value="leviko-db" dir="ltr" style="text-align:left">
-      </div>
+      <div class="field"><label id="t-wL">نام Worker</label><input type="text" id="workerName" value="leviko" dir="ltr" style="text-align:left"></div>
+      <div class="field" id="dbField"><label id="t-dL">نام دیتابیس D1</label><input type="text" id="dbName" value="leviko-db" dir="ltr" style="text-align:left"></div>
       <div class="err" id="e2"></div>
-      <button class="btn btn-p" onclick="run()">🚀 <span id="t-run">شروع نصب</span></button>
+      <button class="btn btn-p" onclick="runInstall()">🚀 <span id="t-run">شروع نصب</span></button>
       <button class="btn btn-g" onclick="show(1)">← <span id="t-back">بازگشت</span></button>
     </div>
   </div>
 
-  <!-- STEP 3 -->
   <div class="panel" id="p3">
     <div class="card">
-      <div class="ch">
-        <div class="badge">3</div>
-        <div>
-          <h2 id="t-s3">در حال نصب</h2>
-          <p id="t-s3d">صفحه را باز نگه دار</p>
-        </div>
-      </div>
+      <div class="ch"><div class="badge">3</div><div><h2 id="t-s3">در حال نصب</h2><p id="t-s3d">صفحه را باز نگه دار</p></div></div>
       <ul class="plist">
         <li data-s="account"><span class="dot">1</span><span id="t-st1">احراز حساب</span></li>
         <li data-s="code"><span class="dot">2</span><span id="t-st2">دانلود سورس</span></li>
@@ -219,416 +107,244 @@ pre.copybox{background:#000;border:1px solid var(--line);border-radius:10px;padd
       <div class="err" id="e3"></div>
       <div class="win" id="win">
         <h3 id="t-ok">نصب موفق بود</h3>
-        <div class="note" id="t-okL">لینک پنل ادمین</div>
+        <div class="note" id="t-okL">لینک پنل</div>
         <a id="panelUrl" href="#" target="_blank"></a>
-        <div class="note" id="t-okN">اولین ورود: رمز پنل را خودت می‌سازی</div>
-        <button class="btn btn-p" style="margin-top:12px" onclick="window.open(document.getElementById('panelUrl').href,'_blank')">
-          <span id="t-open">باز کردن پنل</span>
-        </button>
+        <div class="note" id="t-okN">اولین ورود: رمز را خودت می‌سازی</div>
+        <button class="btn btn-p" style="margin-top:12px" onclick="window.open(document.getElementById('panelUrl').href,'_blank')"><span id="t-open">باز کردن پنل</span></button>
       </div>
-      <button class="btn btn-g" id="btnRetry" style="display:none" onclick="run()">🔄 <span id="t-retry">تلاش مجدد</span></button>
+      <button class="btn btn-g" id="btnRetry" style="display:none" onclick="runInstall()">🔄 تلاش مجدد</button>
     </div>
   </div>
-
   <div class="foot">Leviko · <a href="https://github.com/danesh1118/LEVIKO-PANEL" target="_blank">GitHub</a></div>
 </div>
-
 <script>
-/* ── Proxy worker source (embedded for one-click copy) ── */
-const PROXY_CODE = `const CORS={
-  'Access-Control-Allow-Origin':'*',
-  'Access-Control-Allow-Methods':'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers':'Content-Type, Authorization, X-Proxy-Target, X-GitHub-Url',
-  'Access-Control-Max-Age':'86400',
-};
-const j=(d,s=200)=>new Response(JSON.stringify(d),{status:s,headers:{'Content-Type':'application/json',...CORS}});
-function ok(p){
-  if(p==='/accounts'||p==='/accounts/')return true;
-  if(!p.startsWith('/accounts/'))return false;
-  return[/^\\/accounts\\/[^/]+\\/d1\\/database/,/^\\/accounts\\/[^/]+\\/workers\\/scripts\\//,
-    /^\\/accounts\\/[^/]+\\/workers\\/scripts\\/[^/]+\\/subdomain$/,/^\\/accounts\\/[^/]+\\/workers\\/subdomain$/,
-    /^\\/accounts\\/[^/]+$/].some(r=>r.test(p));
-}
-export default{async fetch(req){
-  if(req.method==='OPTIONS')return new Response(null,{status:204,headers:CORS});
-  const u=new URL(req.url);
-  if(u.pathname==='/health')return j({ok:true,service:'leviko-proxy'});
-  if(u.pathname==='/github'){
-    const t=req.headers.get('X-GitHub-Url');
-    if(!t)return j({error:'no url'},400);
-    if(!t.startsWith('https://raw.githubusercontent.com/')&&!t.startsWith('https://cdn.jsdelivr.net/')&&!t.startsWith('https://api.github.com/'))
-      return j({error:'blocked'},403);
-    const r=await fetch(t);
-    return new Response(await r.text(),{status:r.status,headers:{'Content-Type':'application/javascript',...CORS}});
-  }
-  const auth=req.headers.get('Authorization');
-  if(!auth)return j({error:'no auth'},401);
-  const target=req.headers.get('X-Proxy-Target');
-  if(!target||!ok(target))return j({error:'path denied'},403);
-  const opts={method:req.method,headers:{Authorization:auth}};
-  if(req.method!=='GET'&&req.method!=='HEAD'){
-    const ct=req.headers.get('Content-Type')||'';
-    if(ct.includes('multipart/form-data')){opts.body=await req.formData()}
-    else{opts.body=await req.text();opts.headers['Content-Type']='application/json'}
-  }
-  const r=await fetch('https://api.cloudflare.com/client/v4'+target,opts);
-  return new Response(await r.text(),{status:r.status,headers:{'Content-Type':'application/json',...CORS}});
-}};`;
+/* Same architecture as mature public installers: default hosted CORS proxy + direct API fallback */
+const DEFAULT_PROXY_URL = 'https://nahan-installer-proxy.iyebekhe.workers.dev';
+const CF_API = 'https://api.cloudflare.com/client/v4';
+const SCRIPT_SOURCES = [
+  'https://cdn.jsdelivr.net/gh/danesh1118/LEVIKO-PANEL@main/worker.js',
+  'https://raw.githubusercontent.com/danesh1118/LEVIKO-PANEL/main/worker.js',
+  'https://api.github.com/repos/danesh1118/LEVIKO-PANEL/contents/worker.js?ref=main',
+];
+const MODULE = 'worker.js';
+const BINDING = 'DB';
+const PANEL_PATH = '/leviko';
 
-const REPO = {
-  sources: [
-    'https://cdn.jsdelivr.net/gh/danesh1118/LEVIKO-PANEL@main/worker.js',
-    'https://raw.githubusercontent.com/danesh1118/LEVIKO-PANEL/main/worker.js',
-    'https://api.github.com/repos/danesh1118/LEVIKO-PANEL/contents/worker.js?ref=main',
-  ],
-  panel: '/leviko',
-  binding: 'DB',
-  module: 'worker.js',
+const state = {
+  mode: 'install',
+  apiToken: '',
+  accountId: '',
+  workerName: 'leviko',
+  dbName: 'leviko-db',
+  dbId: '',
+  workerCode: '',
+  deployUrl: '',
+  subdomain: '',
+  proxyUrl: localStorage.getItem('leviko_proxy_url') || '',
+  ready: false,
 };
 
-const I18N = {
-  fa: {
-    title:'نصب خودکار لویکو', sub:'استقرار پنل روی Cloudflare Workers',
-    s1:'اتصال', s1d:'پروکسی + توکن API کلودفلر',
-    why:'چرا پروکسی لازم است؟',
-    whyD:' مرورگر به‌خاطر CORS نمی‌تواند مستقیم به API کلودفلر درخواست بزند. یک Worker کوچک به‌عنوان پل لازم است (یک‌بار).',
-    copyP:'کپی کد پروکسی', pL:'آدرس پروکسی (Worker)', pH:'مثال: https://my-proxy.username.workers.dev',
-    create:'ساخت توکن API', tokL:'API Token', check:'بررسی و ادامه',
-    s2:'پیکربندی', s2d:'نام Worker و دیتابیس', m1:'نصب تازه', m1d:'Worker + D1', m2:'بروزرسانی', m2d:'فقط کد',
-    wL:'نام Worker', dL:'نام دیتابیس D1', run:'شروع نصب', back:'بازگشت',
-    s3:'در حال نصب', s3d:'صفحه را باز نگه دار',
-    st1:'احراز حساب', st2:'دانلود سورس', st3:'دیتابیس D1', st4:'استقرار Worker', st5:'آدرس عمومی', st6:'پایان',
-    ok:'نصب موفق بود', okL:'لینک پنل ادمین', okN:'اولین ورود: رمز پنل را خودت می‌سازی', open:'باز کردن پنل', retry:'تلاش مجدد',
-    eProxy:'آدرس پروکسی را وارد کن', eTok:'توکن API را وارد کن', eProxyFail:'پروکسی در دسترس نیست — آدرس و Deploy را چک کن',
-    eTokFail:'توکن نامعتبر یا بدون دسترسی کافی', eName:'نام Worker نامعتبر', eCode:'دانلود سورس ناموفق',
-    eD1:'خطا در D1', eDep:'استقرار Worker ناموفق',
-  },
-  en: {
-    title:'Leviko Auto Installer', sub:'Deploy panel on Cloudflare Workers',
-    s1:'Connect', s1d:'Proxy + Cloudflare API token',
-    why:'Why is a proxy required?',
-    whyD:' Browsers block direct calls to Cloudflare API (CORS). A small Worker acts as a bridge (one-time setup).',
-    copyP:'Copy proxy code', pL:'Proxy Worker URL', pH:'e.g. https://my-proxy.username.workers.dev',
-    create:'Create API token', tokL:'API Token', check:'Verify & continue',
-    s2:'Configure', s2d:'Worker and database names', m1:'Fresh install', m1d:'Worker + D1', m2:'Update', m2d:'Code only',
-    wL:'Worker name', dL:'D1 database name', run:'Start install', back:'Back',
-    s3:'Installing', s3d:'Keep this page open',
-    st1:'Verify account', st2:'Download source', st3:'D1 database', st4:'Deploy Worker', st5:'Public URL', st6:'Done',
-    ok:'Install complete', okL:'Admin panel link', okN:'First visit: set your own panel password', open:'Open panel', retry:'Retry',
-    eProxy:'Enter proxy URL', eTok:'Enter API token', eProxyFail:'Proxy unreachable — check URL and deploy',
-    eTokFail:'Invalid token or missing permissions', eName:'Invalid worker name', eCode:'Failed to download source',
-    eD1:'D1 error', eDep:'Worker deploy failed',
-  }
+let lang = 'fa';
+const T = {
+  fa:{title:'نصب خودکار لویکو',sub:'استقرار پنل روی Cloudflare با یک توکن',s1:'توکن API',s1d:'فقط یک توکن کافی است',create:'ساخت توکن آماده‌شده',tokL:'API Token',next:'ادامه',
+    f1:'ساخت خودکار',f2:'آپلود سورس',f3:'متغیر DB',f4:'workers.dev',s2:'پیکربندی',s2d:'نام Worker و دیتابیس',m1:'نصب تازه',m2:'بروزرسانی',wL:'نام Worker',dL:'نام دیتابیس D1',run:'شروع نصب',back:'بازگشت',
+    s3:'در حال نصب',s3d:'صفحه را باز نگه دار',st1:'احراز حساب',st2:'دانلود سورس',st3:'دیتابیس D1',st4:'استقرار Worker',st5:'آدرس عمومی',st6:'پایان',
+    ok:'نصب موفق بود',okL:'لینک پنل',okN:'اولین ورود: رمز را خودت می‌سازی',open:'باز کردن پنل',
+    connOk:'اتصال آماده است',connProxy:'اتصال از طریق پروکسی',connFail:'اتصال ناموفق — دوباره تلاش کنید',eTok:'توکن را وارد کن',eName:'نام Worker نامعتبر'},
+  en:{title:'Leviko Auto Installer',sub:'Deploy on Cloudflare with one token',s1:'API Token',s1d:'One token is enough',create:'Create pre-filled token',tokL:'API Token',next:'Continue',
+    f1:'Auto create',f2:'Upload source',f3:'DB binding',f4:'workers.dev',s2:'Configure',s2d:'Worker & database names',m1:'Fresh install',m2:'Update',wL:'Worker name',dL:'D1 name',run:'Start install',back:'Back',
+    s3:'Installing',s3d:'Keep this page open',st1:'Verify account',st2:'Download source',st3:'D1 database',st4:'Deploy Worker',st5:'Public URL',st6:'Done',
+    ok:'Install complete',okL:'Panel link',okN:'First visit: set your own password',open:'Open panel',
+    connOk:'Connection ready',connProxy:'Connected via proxy',connFail:'Connection failed — retry',eTok:'Enter token',eName:'Invalid worker name'}
 };
-
-let lang = 'fa', mode = 'install';
-const S = { proxy:'', token:'', accountId:'', workerName:'leviko', dbName:'leviko-db', dbId:'', code:'', url:'', subdomain:'' };
-
-function t(k){ return I18N[lang][k] || k; }
+function t(k){return (T[lang]&&T[lang][k])||k}
 function applyLang(){
-  document.documentElement.lang = lang;
-  document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
-  document.getElementById('langBtn').textContent = lang === 'fa' ? 'EN' : 'FA';
-  ['title','sub','s1','s1d','why','whyD','copyP','pL','pH','create','tokL','check','s2','s2d','m1','m1d','m2','m2d','wL','dL','run','back','s3','s3d','st1','st2','st3','st4','st5','st6','ok','okL','okN','open','retry']
-    .forEach(k => { const el = document.getElementById('t-'+k); if (el) el.textContent = t(k); });
+  document.documentElement.lang=lang;document.documentElement.dir=lang==='fa'?'rtl':'ltr';
+  document.getElementById('langBtn').textContent=lang==='fa'?'EN':'FA';
+  Object.keys(T.fa).forEach(k=>{const el=document.getElementById('t-'+k);if(el)el.textContent=t(k)});
 }
-function toggleLang(){ lang = lang === 'fa' ? 'en' : 'fa'; applyLang(); }
-function toggleEye(){ const i=document.getElementById('apiToken'); i.type = i.type==='password'?'text':'password'; }
-function setMode(m){
-  mode = m;
-  document.querySelectorAll('.mode').forEach(el => el.classList.toggle('on', el.dataset.mode === m));
-  document.getElementById('dbField').style.display = m === 'install' ? 'block' : 'none';
-}
-function setRail(n){
-  document.querySelectorAll('.rail i').forEach(el => {
-    const r = +el.dataset.r;
-    el.classList.remove('on','done');
-    if (r < n) el.classList.add('done');
-    if (r === n) el.classList.add('on');
-  });
-}
-function show(n){
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('on'));
-  document.getElementById('p'+n).classList.add('on');
-  setRail(n);
-}
-function showErr(id, msg){ const e=document.getElementById(id); e.textContent=msg; e.classList.add('show'); }
-function hideErr(id){ const e=document.getElementById(id); e.textContent=''; e.classList.remove('show'); }
-function setStep(name, st){
-  const li = document.querySelector(`[data-s="${name}"]`);
-  if (!li) return;
-  const d = li.querySelector('.dot');
-  d.className = 'dot' + (st ? ' '+st : '');
-  if (st==='ok') d.textContent='✓';
-  else if (st==='fail') d.textContent='✗';
-  else if (st==='run') d.textContent='…';
-}
-function log(msg, type=''){
-  const box = document.getElementById('log');
-  box.classList.add('show');
-  const line = document.createElement('div');
-  if (type) line.className = type;
-  line.textContent = msg;
-  box.appendChild(line);
-  box.scrollTop = box.scrollHeight;
-}
+function toggleLang(){lang=lang==='fa'?'en':'fa';applyLang()}
+function toggleEye(){const i=document.getElementById('apiToken');i.type=i.type==='password'?'text':'password'}
+function setMode(m){state.mode=m;document.querySelectorAll('.mode').forEach(el=>el.classList.toggle('on',el.dataset.mode===m));document.getElementById('dbField').style.display=m==='install'?'block':'none'}
+function setRail(n){document.querySelectorAll('.rail i').forEach(el=>{const r=+el.dataset.r;el.classList.remove('on','done');if(r<n)el.classList.add('done');if(r===n)el.classList.add('on')})}
+function show(n){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));document.getElementById('p'+n).classList.add('on');setRail(n)}
+function showErr(id,m){const e=document.getElementById(id);e.textContent=m;e.classList.add('show')}
+function hideErr(id){const e=document.getElementById(id);e.textContent='';e.classList.remove('show')}
+function setStep(n,st){const li=document.querySelector(`[data-s="${n}"]`);if(!li)return;const d=li.querySelector('.dot');d.className='dot'+(st?' '+st:'');if(st==='ok')d.textContent='✓';else if(st==='fail')d.textContent='✗';else if(st==='run')d.textContent='…'}
+function log(m,type=''){const b=document.getElementById('log');b.classList.add('show');const l=document.createElement('div');if(type)l.className=type;l.textContent=m;b.appendChild(l);b.scrollTop=b.scrollHeight}
 
-function copyProxy(){
-  navigator.clipboard.writeText(PROXY_CODE).then(() => {
-    alert(lang==='fa' ? 'کد پروکسی کپی شد — در Worker جدید پیست و Deploy کن' : 'Proxy code copied — paste into a new Worker and Deploy');
-  }).catch(() => {
-    document.getElementById('proxySrc').style.display='block';
-    document.getElementById('proxySrc').textContent = PROXY_CODE;
-  });
-}
-
-async function cf(path, opts = {}){
-  const proxy = S.proxy.replace(/\/$/, '');
-  const headers = { Authorization: 'Bearer ' + S.token };
-  // Always go through proxy
-  if (opts.body instanceof FormData) {
-    // let browser set multipart boundary
-  } else if (opts.body && typeof opts.body === 'string') {
-    headers['Content-Type'] = 'application/json';
+async function cfFetch(path, options={}){
+  const method=options.method||'GET';
+  const proxy=state.proxyUrl;
+  if(proxy){
+    const headers={'Authorization':'Bearer '+state.apiToken,'X-Proxy-Target':path,...(options.headers||{})};
+    if(options.body&&!(options.body instanceof FormData))headers['Content-Type']='application/json';
+    const res=await fetch(proxy.replace(/\/$/,'')+path,{method,headers,body:options.body});
+    const text=await res.text();
+    let json;try{json=JSON.parse(text)}catch{return{success:false,errors:[{message:'non-json '+res.status+': '+text.slice(0,200)}]}}
+    if(!json.success)return{success:false,errors:json.errors||[{message:'HTTP '+res.status}],_status:res.status};
+    return json;
   }
-  headers['X-Proxy-Target'] = path;
-
-  const res = await fetch(proxy, {
-    method: opts.method || 'GET',
-    headers,
-    body: opts.body,
-  });
-  const text = await res.text();
-  let data;
-  try { data = JSON.parse(text); } catch {
-    data = { success: false, errors: [{ message: text.slice(0, 300) || ('HTTP ' + res.status) }] };
-  }
-  data._status = res.status;
-  return data;
+  const headers={'Authorization':'Bearer '+state.apiToken,...(options.headers||{})};
+  if(options.body&&!(options.body instanceof FormData))headers['Content-Type']='application/json';
+  const res=await fetch(CF_API+path,{method,headers,body:options.body});
+  const text=await res.text();
+  let json;try{json=JSON.parse(text)}catch{return{success:false,errors:[{message:text.slice(0,200)}]}}
+  return json;
 }
 
-async function checkConn(){
-  hideErr('e1');
-  const proxy = document.getElementById('proxyUrl').value.trim().replace(/\/$/, '');
-  const token = document.getElementById('apiToken').value.trim();
-  if (!proxy || !/^https?:\/\//i.test(proxy)) { showErr('e1', t('eProxy')); return; }
-  if (!token || token.length < 20) { showErr('e1', t('eTok')); return; }
+async function testDirectApi(){
+  try{
+    const res=await fetch(CF_API+'/accounts',{method:'GET',headers:{Authorization:'Bearer test'}});
+    if(res.status===401||res.status===200||res.status===403)return true;
+    const j=await res.json().catch(()=>null);
+    return !!(j&&j.errors);
+  }catch(e){return false}
+}
 
-  S.proxy = proxy;
-  S.token = token;
-  const btn = document.getElementById('btnCheck');
-  btn.disabled = true;
-
-  try {
-    // 1) health
-    let healthOk = false;
-    try {
-      const h = await fetch(proxy + '/health', { method: 'GET' });
-      if (h.ok) {
-        const j = await h.json().catch(() => ({}));
-        if (j.ok) healthOk = true;
-      }
-    } catch (e) {}
-    if (!healthOk) {
-      // try root OPTIONS / any response
-      try {
-        const h2 = await fetch(proxy, { method: 'GET' });
-        // any response means host is reachable
-        if (h2.status > 0) healthOk = true;
-      } catch (e) {
-        showErr('e1', t('eProxyFail') + '\n' + e.message);
-        btn.disabled = false;
-        return;
-      }
+async function initConnection(){
+  const box=document.getElementById('connBox');
+  const txt=document.getElementById('connTxt');
+  const btn=document.getElementById('btnNext');
+  // saved proxy
+  if(state.proxyUrl){
+    try{
+      const r=await fetch(state.proxyUrl.replace(/\/$/,'')+'/health');
+      const j=await r.json();
+      if(j.ok){state.ready=true;box.innerHTML='<span style="color:var(--ok)">✓</span><span>'+t('connProxy')+'</span>';btn.disabled=false;return}
+    }catch(e){state.proxyUrl='';localStorage.removeItem('leviko_proxy_url')}
+  }
+  // direct
+  if(await testDirectApi()){
+    state.ready=true;state.proxyUrl='';
+    box.innerHTML='<span style="color:var(--ok)">✓</span><span>'+t('connOk')+'</span>';
+    btn.disabled=false;return;
+  }
+  // default public proxy (same model as popular installers)
+  try{
+    const r=await fetch(DEFAULT_PROXY_URL+'/health');
+    const j=await r.json();
+    if(j.ok){
+      state.proxyUrl=DEFAULT_PROXY_URL;state.ready=true;
+      box.innerHTML='<span style="color:var(--ok)">✓</span><span>'+t('connProxy')+'</span>';
+      btn.disabled=false;return;
     }
+  }catch(e){}
+  box.innerHTML='<span style="color:var(--err)">✗</span><span>'+t('connFail')+'</span>';
+  btn.disabled=false; // still allow try
+}
 
-    // 2) token + account
-    const r = await cf('/accounts');
-    if (!r.success || !r.result?.length) {
-      const msg = r.errors?.[0]?.message || t('eTokFail');
-      showErr('e1', msg);
-      btn.disabled = false;
-      return;
-    }
-    S.accountId = r.result[0].id;
-    show(2);
-  } catch (e) {
-    showErr('e1', t('eProxyFail') + '\n' + (e.message || e));
-  }
-  btn.disabled = false;
+function go2(){
+  const tok=document.getElementById('apiToken').value.trim();
+  if(!tok||tok.length<20){showErr('e1',t('eTok'));return}
+  state.apiToken=tok;hideErr('e1');show(2);
 }
 
 async function fetchCode(){
-  const errors = [];
-  // via proxy github endpoint
-  try {
-    const res = await fetch(S.proxy.replace(/\/$/, '') + '/github', {
-      headers: { 'X-GitHub-Url': REPO.sources[1] }
-    });
-    if (res.ok) {
-      const code = await res.text();
-      if (code && code.length > 3000 && code.includes('export default')) {
-        S.code = code;
-        log('source via proxy · ' + (code.length/1024).toFixed(1) + ' KB', 'ok');
-        return { ok: true };
+  const errors=[];
+  if(state.proxyUrl){
+    try{
+      const res=await fetch(state.proxyUrl.replace(/\/$/,'')+'/github',{headers:{'X-GitHub-Url':SCRIPT_SOURCES[1]}});
+      if(res.ok){
+        const code=await res.text();
+        if(code&&code.length>3000&&code.includes('export default')){state.workerCode=code;log('source · '+(code.length/1024).toFixed(1)+' KB','ok');return{ok:true}}
       }
-    }
-  } catch (e) { errors.push('proxy-gh: ' + e.message); }
-
-  // direct public CDNs (no auth needed)
-  for (const url of REPO.sources) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) { errors.push(url + ' ' + res.status); continue; }
-      let code;
-      if (url.includes('api.github.com')) {
-        const j = await res.json();
-        const bin = atob(j.content.replace(/\n/g, ''));
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        code = new TextDecoder().decode(bytes);
-      } else code = await res.text();
-      if (!code || code.length < 3000) { errors.push('small'); continue; }
-      if (!code.includes('export default')) { errors.push('invalid'); continue; }
-      S.code = code;
-      log('source · ' + (code.length/1024).toFixed(1) + ' KB', 'ok');
-      return { ok: true };
-    } catch (e) { errors.push(e.message); }
+    }catch(e){errors.push(e.message)}
   }
-  return { ok: false, msg: errors.join(' | ') };
+  for(const url of SCRIPT_SOURCES){
+    try{
+      const res=await fetch(url);if(!res.ok){errors.push(res.status);continue}
+      let code;
+      if(url.includes('api.github.com')){
+        const j=await res.json();const bin=atob(j.content.replace(/\n/g,''));
+        const bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+        code=new TextDecoder().decode(bytes);
+      }else code=await res.text();
+      if(!code||code.length<3000||!code.includes('export default'))continue;
+      state.workerCode=code;log('source · '+(code.length/1024).toFixed(1)+' KB','ok');return{ok:true};
+    }catch(e){errors.push(e.message)}
+  }
+  return{ok:false,msg:errors.join(' | ')}
 }
 
 async function ensureD1(){
-  if (mode === 'update') {
-    const set = await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}/settings`);
-    if (set.success && set.result?.bindings) {
-      const b = set.result.bindings.find(x => x.name === REPO.binding || x.type === 'd1');
-      if (b && (b.id || b.uuid)) {
-        S.dbId = b.id || b.uuid;
-        log('D1 binding · ' + S.dbId, 'ok');
-        return { ok: true };
-      }
+  if(state.mode==='update'){
+    const set=await cfFetch(`/accounts/${state.accountId}/workers/scripts/${encodeURIComponent(state.workerName)}/settings`);
+    if(set.success&&set.result?.bindings){
+      const b=set.result.bindings.find(x=>x.name===BINDING||x.type==='d1');
+      if(b&&(b.id||b.uuid)){state.dbId=b.id||b.uuid;log('D1 binding · '+state.dbId,'ok');return{ok:true}}
     }
   }
-  const list = await cf(`/accounts/${S.accountId}/d1/database?per_page=100`);
-  if (list.success && list.result) {
-    const f = list.result.find(d => d.name === S.dbName);
-    if (f) {
-      S.dbId = f.uuid || f.id;
-      log('D1 exists · ' + S.dbName, 'ok');
-      return { ok: true };
-    }
+  const list=await cfFetch(`/accounts/${state.accountId}/d1/database?per_page=100`);
+  if(list.success&&list.result){
+    const f=list.result.find(d=>d.name===state.dbName);
+    if(f){state.dbId=f.uuid||f.id;log('D1 exists · '+state.dbName,'ok');return{ok:true}}
   }
-  if (mode === 'update') return { ok: false, msg: 'D1 binding not found' };
-
-  const r = await cf(`/accounts/${S.accountId}/d1/database`, {
-    method: 'POST',
-    body: JSON.stringify({ name: S.dbName }),
-  });
-  if (r.success && r.result) {
-    S.dbId = r.result.uuid || r.result.id;
-    log('D1 created · ' + S.dbName, 'ok');
-    return { ok: true };
+  if(state.mode==='update')return{ok:false,msg:'D1 not found'};
+  const r=await cfFetch(`/accounts/${state.accountId}/d1/database`,{method:'POST',body:JSON.stringify({name:state.dbName})});
+  if(r.success&&r.result){state.dbId=r.result.uuid||r.result.id;log('D1 created · '+state.dbName,'ok');return{ok:true}}
+  const msg=r.errors?.[0]?.message||'';
+  if(/already exists|already_exists|already taken/i.test(msg)){
+    const list2=await cfFetch(`/accounts/${state.accountId}/d1/database?per_page=100`);
+    const f=list2.result?.find(d=>d.name===state.dbName);
+    if(f){state.dbId=f.uuid||f.id;return{ok:true}}
   }
-  return { ok: false, msg: r.errors?.[0]?.message || t('eD1') };
+  return{ok:false,msg:msg||'D1 error'}
 }
 
-async function deploy(){
-  const metadata = {
-    main_module: REPO.module,
-    compatibility_date: '2024-11-01',
-    compatibility_flags: ['nodejs_compat'],
-    bindings: [{ name: REPO.binding, type: 'd1', id: S.dbId }],
-  };
-  const form = new FormData();
-  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-  form.append(REPO.module, new Blob([S.code], { type: 'application/javascript+module' }), REPO.module);
-
-  const r = await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}`, {
-    method: 'PUT',
-    body: form,
-  });
-  if (!r.success) {
-    return { ok: false, msg: (r.errors || []).map(e => e.message).join('; ') || t('eDep') };
-  }
-  log('worker · ' + S.workerName, 'ok');
-  return { ok: true };
+async function deployWorker(){
+  const metadata={main_module:MODULE,compatibility_date:'2024-11-01',compatibility_flags:['nodejs_compat'],bindings:[{name:BINDING,type:'d1',id:state.dbId}]};
+  const form=new FormData();
+  form.append('metadata',new Blob([JSON.stringify(metadata)],{type:'application/json'}));
+  form.append(MODULE,new Blob([state.workerCode],{type:'application/javascript+module'}),MODULE);
+  const r=await cfFetch(`/accounts/${state.accountId}/workers/scripts/${encodeURIComponent(state.workerName)}`,{method:'PUT',body:form});
+  if(!r.success)return{ok:false,msg:(r.errors||[]).map(e=>e.message).join('; ')||'deploy failed'};
+  log('worker · '+state.workerName,'ok');return{ok:true};
 }
 
 async function enableUrl(){
-  const sub = await cf(`/accounts/${S.accountId}/workers/subdomain`);
-  if (sub.success && sub.result?.subdomain) S.subdomain = sub.result.subdomain;
-
-  try {
-    await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}/subdomain`, {
-      method: 'POST',
-      body: JSON.stringify({ enabled: true }),
-    });
-  } catch (e) {}
-
-  S.url = S.subdomain
-    ? `https://${S.workerName}.${S.subdomain}.workers.dev`
-    : `https://${S.workerName}.workers.dev`;
-  log('url · ' + S.url, 'ok');
-  return { ok: true };
+  const sub=await cfFetch(`/accounts/${state.accountId}/workers/subdomain`);
+  if(sub.success&&sub.result?.subdomain)state.subdomain=sub.result.subdomain;
+  try{await cfFetch(`/accounts/${state.accountId}/workers/scripts/${encodeURIComponent(state.workerName)}/subdomain`,{method:'POST',body:JSON.stringify({enabled:true})})}catch(e){}
+  // services API like mature installers
+  try{
+    await cfFetch(`/accounts/${state.accountId}/workers/services/${encodeURIComponent(state.workerName)}`,{method:'PUT',body:JSON.stringify({})});
+  }catch(e){}
+  state.deployUrl=state.subdomain?`https://${state.workerName}.${state.subdomain}.workers.dev`:`https://${state.workerName}.workers.dev`;
+  log('url · '+state.deployUrl,'ok');return{ok:true};
 }
 
-async function run(){
-  S.workerName = document.getElementById('workerName').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
-  S.dbName = document.getElementById('dbName').value.trim() || 'leviko-db';
-  if (!S.workerName || S.workerName.length < 2) { showErr('e2', t('eName')); return; }
-  hideErr('e2'); hideErr('e3');
-  show(3);
+async function runInstall(){
+  state.workerName=document.getElementById('workerName').value.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
+  state.dbName=document.getElementById('dbName').value.trim()||'leviko-db';
+  if(!state.workerName||state.workerName.length<2){showErr('e2',t('eName'));return}
+  hideErr('e2');hideErr('e3');show(3);
   document.getElementById('win').classList.remove('show');
-  document.getElementById('btnRetry').style.display = 'none';
-  document.getElementById('log').innerHTML = '';
-  document.getElementById('log').classList.remove('show');
-  ['account','code','d1','worker','url','done'].forEach(s => setStep(s, ''));
-
-  try {
-    setStep('account', 'run');
-    const acc = await cf('/accounts');
-    if (!acc.success || !acc.result?.length) throw new Error(acc.errors?.[0]?.message || t('eTokFail'));
-    S.accountId = acc.result[0].id;
-    log('account · ' + (acc.result[0].name || S.accountId), 'ok');
-    setStep('account', 'ok');
-
-    setStep('code', 'run');
-    const c = await fetchCode();
-    if (!c.ok) throw new Error(c.msg || t('eCode'));
-    setStep('code', 'ok');
-
-    setStep('d1', 'run');
-    const d = await ensureD1();
-    if (!d.ok) throw new Error(d.msg || t('eD1'));
-    setStep('d1', 'ok');
-
-    setStep('worker', 'run');
-    const w = await deploy();
-    if (!w.ok) throw new Error(w.msg || t('eDep'));
-    setStep('worker', 'ok');
-
-    setStep('url', 'run');
-    await enableUrl();
-    setStep('url', 'ok');
-
-    setStep('done', 'run');
-    setStep('done', 'ok');
-
-    const link = S.url + REPO.panel;
-    document.getElementById('panelUrl').href = link;
-    document.getElementById('panelUrl').textContent = link;
+  document.getElementById('btnRetry').style.display='none';
+  document.getElementById('log').innerHTML='';document.getElementById('log').classList.remove('show');
+  ['account','code','d1','worker','url','done'].forEach(s=>setStep(s,''));
+  try{
+    setStep('account','run');
+    const acc=await cfFetch('/accounts');
+    if(!acc.success||!acc.result?.length)throw new Error(acc.errors?.[0]?.message||'account error');
+    state.accountId=acc.result[0].id;log('account · '+(acc.result[0].name||state.accountId),'ok');setStep('account','ok');
+    setStep('code','run');const c=await fetchCode();if(!c.ok)throw new Error(c.msg||'code');setStep('code','ok');
+    setStep('d1','run');const d=await ensureD1();if(!d.ok)throw new Error(d.msg||'d1');setStep('d1','ok');
+    setStep('worker','run');const w=await deployWorker();if(!w.ok)throw new Error(w.msg||'deploy');setStep('worker','ok');
+    setStep('url','run');await enableUrl();setStep('url','ok');
+    setStep('done','run');setStep('done','ok');
+    const link=state.deployUrl+PANEL_PATH;
+    document.getElementById('panelUrl').href=link;document.getElementById('panelUrl').textContent=link;
     document.getElementById('win').classList.add('show');
-  } catch (e) {
-    console.error(e);
-    showErr('e3', e.message || String(e));
-    log(String(e.message || e), 'err');
-    document.getElementById('btnRetry').style.display = 'block';
-    document.querySelectorAll('.dot.run').forEach(d => { d.className = 'dot fail'; d.textContent = '✗'; });
+  }catch(e){
+    console.error(e);showErr('e3',e.message||String(e));log(String(e.message||e),'err');
+    document.getElementById('btnRetry').style.display='block';
+    document.querySelectorAll('.dot.run').forEach(d=>{d.className='dot fail';d.textContent='✗'});
   }
 }
 
 applyLang();
+initConnection();
 </script>
 </body>
 </html>
