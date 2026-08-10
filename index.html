@@ -287,40 +287,80 @@ async function deploy(){
 }
 
 async function resolveUrl(){
-  let subdomain='';
-  try{
-    const sub=await cf(`/accounts/${S.accountId}/workers/subdomain`);
-    if(sub.success&&sub.result?.subdomain)subdomain=sub.result.subdomain;
-  }catch{}
-  try{
-    await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}/subdomain`,{
-      method:'POST',body:JSON.stringify({enabled:true})
-    });
-  }catch{}
+  let subdomain = '';
 
-  // try read actual hosts from service
-  try{
-    const svc=await cf(`/accounts/${S.accountId}/workers/services/${encodeURIComponent(S.workerName)}`);
-    const env=svc.result?.default_environment||svc.result?.environment||{};
-    const hosts=env.script?.hosts||env.hosts||svc.result?.hosts||[];
-    if(Array.isArray(hosts)){
-      for(const h of hosts){
-        const s=String(h).replace(/^https?:\/\//,'');
-        if(s.includes('workers.dev')){S.url='https://'+s;log('url · '+S.url,'ok');return{ok:true}}
-      }
-      if(hosts[0]){S.url='https://'+String(hosts[0]).replace(/^https?:\/\//,'');log('url · '+S.url,'ok');return{ok:true}}
+  // 1) Get account workers.dev subdomain (required for correct URL)
+  try {
+    const sub = await cf(`/accounts/${S.accountId}/workers/subdomain`);
+    if (sub.success && sub.result?.subdomain) {
+      subdomain = String(sub.result.subdomain).trim();
+      log('subdomain · ' + subdomain, 'ok');
+    } else {
+      log('subdomain API: ' + (sub.errors?.[0]?.message || JSON.stringify(sub).slice(0,120)), 'err');
     }
-  }catch{}
-
-  if(subdomain){
-    S.url=`https://${S.workerName}.${subdomain}.workers.dev`;
-  }else{
-    // fallback — still use worker name pattern
-    S.url=`https://${S.workerName}.workers.dev`;
-    log('subdomain unknown — verify URL in CF dashboard','err');
+  } catch (e) {
+    log('subdomain fetch error', 'err');
   }
-  log('url · '+S.url,'ok');
-  return{ok:true};
+
+  // 2) Enable workers.dev route for this script
+  try {
+    await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}/subdomain`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled: true, previews_enabled: true })
+    });
+  } catch (_) {}
+
+  // 3) Try services endpoint for actual hosts
+  try {
+    const svc = await cf(`/accounts/${S.accountId}/workers/services/${encodeURIComponent(S.workerName)}`);
+    const env = svc.result?.default_environment || svc.result?.environment || {};
+    const hosts = env.script?.hosts || env.hosts || svc.result?.hosts || [];
+    if (Array.isArray(hosts) && hosts.length) {
+      for (const h of hosts) {
+        const s = String(h).replace(/^https?:\/\//, '').replace(/\/$/, '');
+        if (s.includes('workers.dev')) {
+          S.url = 'https://' + s;
+          log('url · ' + S.url, 'ok');
+          return { ok: true };
+        }
+      }
+      const first = String(hosts[0]).replace(/^https?:\/\//, '').replace(/\/$/, '');
+      if (first) {
+        S.url = 'https://' + first;
+        log('url · ' + S.url, 'ok');
+        return { ok: true };
+      }
+    }
+  } catch (_) {}
+
+  // 4) Try script settings / routes style endpoints
+  try {
+    const set = await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}`);
+    const routes = set.result?.routes || set.result?.route || [];
+    if (Array.isArray(routes)) {
+      for (const r of routes) {
+        const p = (r.pattern || r || '').toString().replace(/^https?:\/\//, '').replace(/\/\*$/, '').replace(/\/$/, '');
+        if (p.includes('workers.dev')) {
+          S.url = 'https://' + p;
+          log('url · ' + S.url, 'ok');
+          return { ok: true };
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 5) Build from known subdomain
+  if (subdomain) {
+    S.url = `https://${S.workerName}.${subdomain}.workers.dev`;
+    log('url · ' + S.url, 'ok');
+    return { ok: true };
+  }
+
+  // 6) Last resort: invalid fallback + clear warning
+  S.url = `https://${S.workerName}.workers.dev`;
+  log('⚠ subdomain پیدا نشد — لینک احتمالاً اشتباه است. از داشبورد Cloudflare آدرس واقعی را کپی کن', 'err');
+  log('url (fallback) · ' + S.url, 'err');
+  return { ok: true };
 }
 
 async function bootstrap(){
