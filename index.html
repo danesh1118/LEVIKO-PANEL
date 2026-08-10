@@ -120,13 +120,14 @@ input:focus,select:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(139,92,
       <div class="err" id="e3"></div>
       <div class="win" id="win">
         <h3>نصب موفق بود ✓</h3>
-        <div class="note">آدرس پنل ادمین</div>
-        <a id="panelUrl" href="#" target="_blank"></a>
+        <div class="note">آدرس پنل ادمین (اگر اشتباه بود ویرایش کن)</div>
+        <input id="panelUrlInput" dir="ltr" style="text-align:left;width:100%;padding:10px 12px;margin:6px 0;background:var(--bg2);border:1px solid var(--line);border-radius:var(--rs);color:var(--p3);font-weight:700;font-size:.84rem">
+        <a id="panelUrl" href="#" target="_blank" style="display:none"></a>
         <div class="note">نمونه سابسکریپشن</div>
-        <a id="subUrl" href="#" target="_blank" style="font-size:.78rem;color:var(--mut)"></a>
+        <div id="subUrl" style="font-size:.78rem;color:var(--mut);word-break:break-all;margin:4px 0"></div>
         <div class="note" id="credNote"></div>
         <div class="win-actions">
-          <button class="btn btn-p" style="margin:0" onclick="window.open(document.getElementById('panelUrl').href,'_blank')">باز کردن پنل</button>
+          <button class="btn btn-p" style="margin:0" onclick="openPanel()">باز کردن پنل</button>
           <button class="btn btn-g" style="margin:0" onclick="copyUrl()">کپی لینک</button>
         </div>
       </div>
@@ -136,8 +137,12 @@ input:focus,select:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(139,92,
   <div class="foot">Leviko · <a href="https://github.com/danesh1118/LEVIKO-PANEL" target="_blank">GitHub</a></div>
 </div>
 <script>
-// پروکسی شخصی Leviko — بعد از Deploy فایل installer-proxy.js این آدرس را با آدرس واقعی خودت عوض کن
-const DEFAULT_PROXY = 'https://leviko-proxy.samansupport.workers.dev';
+// لیست پروکسی‌ها (به ترتیب اولویت) — اول پروکسی شخصی، بعد عمومی
+const PROXY_LIST = [
+  'https://leviko-proxy.samansupport.workers.dev',           // پروکسی شخصی تو
+  'https://nahan-installer-proxy.iyebekhe.workers.dev',     // پروکسی عمومی (fallback)
+];
+const DEFAULT_PROXY = PROXY_LIST[0];
 const CF = 'https://api.cloudflare.com/client/v4';
 const SOURCES = [
   'https://cdn.jsdelivr.net/gh/danesh1118/LEVIKO-PANEL@main/worker.js',
@@ -200,17 +205,37 @@ async function testDirect(){
 
 async function initConn(){
   const box=document.getElementById('connBox'),btn=document.getElementById('btnNext');
+  btn.disabled=true;
+  box.innerHTML='<div class="sp"></div><span>در حال اتصال…</span>';
+
+  // 1) localStorage proxy
   if(S.proxy){
-    try{const r=await fetch(S.proxy.replace(/\/$/,'')+'/health');const j=await r.json();
+    try{
+      const r=await fetch(S.proxy.replace(/\/$/,'')+'/health',{signal:AbortSignal.timeout(8000)});
+      const j=await r.json();
       if(j.ok){box.innerHTML='<span style="color:var(--ok)">✓</span><span>پروکسی آماده</span>';btn.disabled=false;return}
     }catch{S.proxy='';localStorage.removeItem('leviko_proxy_url')}
   }
+
+  // 2) direct CF API (rarely works from browser due to CORS)
   if(await testDirect()){S.proxy='';box.innerHTML='<span style="color:var(--ok)">✓</span><span>اتصال مستقیم آماده</span>';btn.disabled=false;return}
-  try{
-    const r=await fetch(DEFAULT_PROXY+'/health');const j=await r.json();
-    if(j.ok){S.proxy=DEFAULT_PROXY;box.innerHTML='<span style="color:var(--ok)">✓</span><span>پروکسی آماده</span>';btn.disabled=false;return}
-  }catch{}
-  box.innerHTML='<span style="color:var(--err)">✗</span><span>اتصال ناموفق</span>';btn.disabled=false;
+
+  // 3) try every proxy in PROXY_LIST
+  for(const p of PROXY_LIST){
+    try{
+      const r=await fetch(p.replace(/\/$/,'')+'/health',{signal:AbortSignal.timeout(8000)});
+      const j=await r.json();
+      if(j&&j.ok){
+        S.proxy=p;
+        box.innerHTML='<span style="color:var(--ok)">✓</span><span>پروکسی آماده</span>';
+        btn.disabled=false;
+        return;
+      }
+    }catch(_){}
+  }
+
+  box.innerHTML='<span style="color:var(--err)">✗</span><span>اتصال ناموفق — VPN/اینترنت را چک کن یا پروکسی شخصی را Deploy کن</span>';
+  btn.disabled=false;
 }
 
 async function go2(){
@@ -306,9 +331,12 @@ async function resolveUrl(){
 
   // 2) Auto-derive from account name if API failed
   // e.g. "Samansupport@atomicmail.io's Account" → samansupport
-  if (!subdomain && Array.isArray(S.accounts) && S.accounts.length) {
-    const acc = S.accounts.find(a => a.id === S.accountId) || S.accounts[0];
-    const name = (acc?.name || '').toString();
+  if (!subdomain) {
+    let name = S.accountName || '';
+    if (!name && Array.isArray(S.accounts) && S.accounts.length) {
+      const acc = S.accounts.find(a => a.id === S.accountId) || S.accounts[0];
+      name = (acc?.name || '').toString();
+    }
     let guess = '';
     const emailMatch = name.match(/([a-zA-Z0-9._+-]+)@/);
     if (emailMatch) guess = emailMatch[1];
@@ -378,8 +406,14 @@ async function bootstrap(){
 }
 
 function copyUrl(){
-  const u=document.getElementById('panelUrl').href;
+  const u=(document.getElementById('panelUrlInput')?.value||document.getElementById('panelUrl')?.href||'').trim();
   navigator.clipboard.writeText(u).then(()=>alert('کپی شد')).catch(()=>prompt('URL',u));
+}
+function openPanel(){
+  let u=(document.getElementById('panelUrlInput')?.value||'').trim();
+  if(!u) return;
+  if(!/^https?:\/\//i.test(u)) u='https://'+u;
+  window.open(u,'_blank');
 }
 
 async function runInstall(){
@@ -408,7 +442,8 @@ async function runInstall(){
     setStep('account','run');
     const acc=await cf('/accounts/'+S.accountId);
     if(!acc.success)throw new Error(acc.errors?.[0]?.message||'account error');
-    log('account · '+(acc.result?.name||S.accountId),'ok');
+    S.accountName = acc.result?.name || '';
+    log('account · '+(S.accountName||S.accountId),'ok');
     setStep('account','ok');
 
     setStep('code','run');
@@ -430,12 +465,17 @@ async function runInstall(){
 
     const panel=S.url+PANEL;
     const subSample=S.url+SUB+'?sub=USERNAME';
+    const input=document.getElementById('panelUrlInput');
+    if(input){ input.value=panel; }
     document.getElementById('panelUrl').href=panel;
     document.getElementById('panelUrl').textContent=panel;
     document.getElementById('subUrl').textContent=subSample;
-    document.getElementById('subUrl').href='#';
     document.getElementById('credNote').textContent=
       S.mode==='install' ? ('یوزر: '+(S.adminUser||'admin')+' · پسورد: همان که وارد کردی') : 'با همان اطلاعات قبلی وارد شو';
+    // اگر URL بدون ساب‌دامین بود هشدار بده
+    if(/https:\/\/[^./]+\.workers\.dev\//.test(panel) && !/\.[^./]+\.workers\.dev/.test(panel)){
+      log('⚠ لینک ناقص است — در کادر بالا دستی اصلاح کن: https://'+S.workerName+'.SUBDOMAIN.workers.dev'+PANEL,'err');
+    }
     document.getElementById('win').classList.add('show');
   }catch(e){
     console.error(e);showErr('e3',e.message||String(e));log(String(e.message||e),'err');
@@ -448,4 +488,4 @@ applyLang();
 initConn();
 </script>
 </body>
-                                                             </html>
+          </html>
