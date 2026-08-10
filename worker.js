@@ -1009,7 +1009,9 @@ function copy(t){navigator.clipboard.writeText(t).then(()=>alert('کپی شد'))
 const NAME_VARS=['FLAG','COUNTRY','CITY','ISP','PROTOCOL','USER','PORT','PREFIX','IP','IP_NAME','HOST'];
 function renderChips(){
   const box=document.getElementById('varChips');if(!box)return;
-  box.innerHTML=NAME_VARS.map(v=>`<button type="button" class="btn btn-g" style="padding:5px 10px;font-size:.72rem;font-family:monospace" onclick="insertVar('{${v}}')">{${v}}</button>`).join('');
+  box.innerHTML=NAME_VARS.map(function(v){
+    return '<button type="button" class="btn btn-g" style="padding:5px 10px;font-size:.72rem;font-family:monospace" onclick="insertVar(\'{'+v+'}\')">{'+v+'</button>';
+  }).join('');
 }
 function insertVar(v){
   const el=document.getElementById('nameTpl');
@@ -1020,18 +1022,19 @@ function insertVar(v){
 function renderInfoRows(list){
   const box=document.getElementById('infoList');if(!box)return;
   if(!list.length)list=['📊 {usage}','⏳ {expiry}'];
-  box.innerHTML=list.map((t,i)=>`<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
-    <input data-info="${i}" value="${String(t).replace(/"/g,'&quot;')}" dir="ltr" style="text-align:left;flex:1">
-    <button type="button" class="btn btn-d" style="padding:6px 10px" onclick="this.parentElement.remove()">×</button>
-  </div>`).join('');
+  box.innerHTML=list.map(function(t,i){
+    return '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
+      +'<input data-info="'+i+'" value="'+String(t).replace(/"/g,'&quot;')+'" dir="ltr" style="text-align:left;flex:1">'
+      +'<button type="button" class="btn btn-d" style="padding:6px 10px" onclick="this.parentElement.remove()">×</button></div>';
+  }).join('');
 }
 function addInfoRow(){
   const box=document.getElementById('infoList');
   const i=box.children.length;
   const div=document.createElement('div');
   div.style.cssText='display:flex;gap:8px;margin-bottom:8px;align-items:center';
-  div.innerHTML=`<input data-info="${i}" value="" dir="ltr" style="text-align:left;flex:1" placeholder="{usage} / {expiry}">
-    <button type="button" class="btn btn-d" style="padding:6px 10px" onclick="this.parentElement.remove()">×</button>`;
+  div.innerHTML='<input data-info="'+i+'" value="" dir="ltr" style="text-align:left;flex:1" placeholder="{usage} / {expiry}">'
+    +'<button type="button" class="btn btn-d" style="padding:6px 10px" onclick="this.parentElement.remove()">×</button>';
   box.appendChild(div);
 }
 function collectInfo(){
