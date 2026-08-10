@@ -711,16 +711,32 @@ async function handleTelegram(request, env) {
   const botUsername = (await Store.get(env.DB, "tg_bot_username", "")) || "";
 
   const send = (txt, extra = {}) =>
-    tgApi(c.tg_token, "sendMessage", { chat_id: chatId, text: txt, parse_mode: "HTML", disable_web_page_preview: true, ...extra });
-  const edit = (txt, extra = {}) =>
-    tgApi(c.tg_token, "editMessageText", {
+    tgApi(c.tg_token, "sendMessage", {
       chat_id: chatId,
-      message_id: msg?.message_id,
       text: txt,
       parse_mode: "HTML",
       disable_web_page_preview: true,
       ...extra,
     });
+  // پیام تحویل با عکس (QR) است؛ editMessageText روی عکس خطا می‌دهد → در آن حالت پیام جدید می‌فرستیم
+  const isPhotoMsg = !!(msg && (msg.photo || msg.document || msg.video));
+  const edit = async (txt, extra = {}) => {
+    if (!msg?.message_id || isPhotoMsg) {
+      return send(txt, extra);
+    }
+    const r = await tgApi(c.tg_token, "editMessageText", {
+      chat_id: chatId,
+      message_id: msg.message_id,
+      text: txt,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      ...extra,
+    });
+    if (!r || r.ok === false) {
+      return send(txt, extra);
+    }
+    return r;
+  };
 
   if (update.callback_query) {
     await tgApi(c.tg_token, "answerCallbackQuery", { callback_query_id: update.callback_query.id });
