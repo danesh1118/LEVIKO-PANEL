@@ -136,7 +136,8 @@ input:focus,select:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(139,92,
   <div class="foot">Leviko · <a href="https://github.com/danesh1118/LEVIKO-PANEL" target="_blank">GitHub</a></div>
 </div>
 <script>
-const DEFAULT_PROXY = 'https://nahan-installer-proxy.iyebekhe.workers.dev';
+// پروکسی شخصی Leviko — بعد از Deploy فایل installer-proxy.js این آدرس را با آدرس واقعی خودت عوض کن
+const DEFAULT_PROXY = 'https://leviko-proxy.samansupport.workers.dev';
 const CF = 'https://api.cloudflare.com/client/v4';
 const SOURCES = [
   'https://cdn.jsdelivr.net/gh/danesh1118/LEVIKO-PANEL@main/worker.js',
@@ -289,28 +290,50 @@ async function deploy(){
 async function resolveUrl(){
   let subdomain = '';
 
-  // 1) Get account workers.dev subdomain (required for correct URL)
+  // 1) Official API: GET account workers.dev subdomain
   try {
     const sub = await cf(`/accounts/${S.accountId}/workers/subdomain`);
     if (sub.success && sub.result?.subdomain) {
-      subdomain = String(sub.result.subdomain).trim();
+      subdomain = String(sub.result.subdomain).trim().toLowerCase();
       log('subdomain · ' + subdomain, 'ok');
     } else {
-      log('subdomain API: ' + (sub.errors?.[0]?.message || JSON.stringify(sub).slice(0,120)), 'err');
+      const errMsg = sub.errors?.[0]?.message || (sub.success === false ? 'empty' : JSON.stringify(sub).slice(0, 140));
+      log('subdomain API · ' + errMsg, 'err');
     }
   } catch (e) {
-    log('subdomain fetch error', 'err');
+    log('subdomain fetch error · ' + (e.message || e), 'err');
   }
 
-  // 2) Enable workers.dev route for this script
+  // 2) Auto-derive from account name if API failed
+  // e.g. "Samansupport@atomicmail.io's Account" → samansupport
+  if (!subdomain && Array.isArray(S.accounts) && S.accounts.length) {
+    const acc = S.accounts.find(a => a.id === S.accountId) || S.accounts[0];
+    const name = (acc?.name || '').toString();
+    let guess = '';
+    const emailMatch = name.match(/([a-zA-Z0-9._+-]+)@/);
+    if (emailMatch) guess = emailMatch[1];
+    else {
+      const word = name.replace(/['’].*$/, '').trim().split(/[\s@]+/)[0] || '';
+      guess = word;
+    }
+    guess = guess.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 48);
+    if (guess.length >= 2) {
+      subdomain = guess;
+      log('subdomain (from account) · ' + subdomain, 'ok');
+    }
+  }
+
+  // 3) Enable workers.dev for this script
   try {
-    await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}/subdomain`, {
+    const en = await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}/subdomain`, {
       method: 'POST',
       body: JSON.stringify({ enabled: true, previews_enabled: true })
     });
+    if (en && en.success) log('workers.dev enabled', 'ok');
+    else if (en) log('enable · ' + (en.errors?.[0]?.message || 'fail'), 'err');
   } catch (_) {}
 
-  // 3) Try services endpoint for actual hosts
+  // 4) Try services endpoint for real hosts
   try {
     const svc = await cf(`/accounts/${S.accountId}/workers/services/${encodeURIComponent(S.workerName)}`);
     const env = svc.result?.default_environment || svc.result?.environment || {};
@@ -324,41 +347,19 @@ async function resolveUrl(){
           return { ok: true };
         }
       }
-      const first = String(hosts[0]).replace(/^https?:\/\//, '').replace(/\/$/, '');
-      if (first) {
-        S.url = 'https://' + first;
-        log('url · ' + S.url, 'ok');
-        return { ok: true };
-      }
     }
   } catch (_) {}
 
-  // 4) Try script settings / routes style endpoints
-  try {
-    const set = await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}`);
-    const routes = set.result?.routes || set.result?.route || [];
-    if (Array.isArray(routes)) {
-      for (const r of routes) {
-        const p = (r.pattern || r || '').toString().replace(/^https?:\/\//, '').replace(/\/\*$/, '').replace(/\/$/, '');
-        if (p.includes('workers.dev')) {
-          S.url = 'https://' + p;
-          log('url · ' + S.url, 'ok');
-          return { ok: true };
-        }
-      }
-    }
-  } catch (_) {}
-
-  // 5) Build from known subdomain
+  // 5) Build final URL
   if (subdomain) {
     S.url = `https://${S.workerName}.${subdomain}.workers.dev`;
     log('url · ' + S.url, 'ok');
     return { ok: true };
   }
 
-  // 6) Last resort: invalid fallback + clear warning
+  // 6) Last resort (should almost never reach here)
   S.url = `https://${S.workerName}.workers.dev`;
-  log('⚠ subdomain پیدا نشد — لینک احتمالاً اشتباه است. از داشبورد Cloudflare آدرس واقعی را کپی کن', 'err');
+  log('⚠ subdomain پیدا نشد — از داشبورد Cloudflare آدرس واقعی را کپی کن', 'err');
   log('url (fallback) · ' + S.url, 'err');
   return { ok: true };
 }
@@ -447,4 +448,4 @@ applyLang();
 initConn();
 </script>
 </body>
-</html>
+                                                             </html>
