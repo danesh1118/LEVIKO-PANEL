@@ -223,7 +223,7 @@ async function checkUser(env, user) {
   return true;
 }
 
-async function handleVless(request, env) {
+async function handleVless(request, env, ctx) {
   if ((request.headers.get("Upgrade") || "").toLowerCase() !== "websocket")
     return new Response("Expected WebSocket", { status: 426 });
   try {
@@ -234,6 +234,7 @@ async function handleVless(request, env) {
   server.accept();
   let remote = null, username = null, headerDone = false, bytesUp = 0, bytesDown = 0;
   let earlyData = null;
+  let lastFlush = Date.now();
   try {
     const ed = new URL(request.url).searchParams.get("ed");
     if (ed) {
@@ -254,11 +255,23 @@ async function handleVless(request, env) {
 
   const flush = async () => {
     if (!username || !(bytesUp || bytesDown)) return;
+    const add = (bytesUp + bytesDown) / 1073741824;
+    const uname = username;
+    bytesUp = 0;
+    bytesDown = 0;
+    lastFlush = Date.now();
     try {
       await env.DB.prepare("UPDATE users SET used_gb=used_gb+?, last_active=? WHERE username=?")
-        .bind((bytesUp + bytesDown) / 1073741824, Date.now(), username).run();
+        .bind(add, Date.now(), uname).run();
     } catch (_) {}
-    bytesUp = bytesDown = 0;
+  };
+  const scheduleFlush = () => {
+    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(flush());
+    else flush();
+  };
+  const maybeFlush = () => {
+    // flush every ~0.5 MB or every 20s so traffic is not lost if isolate dies
+    if ((bytesUp + bytesDown) > 500000 || Date.now() - lastFlush > 20000) scheduleFlush();
   };
 
   const pipeRemote = async (host, port, payload, isVless, versionByte) => {
@@ -274,9 +287,13 @@ async function handleVless(request, env) {
           while (true) {
             const { done, value } = await r.read();
             if (done) break;
-            if (value?.byteLength) { bytesDown += value.byteLength; if (server.readyState === 1) server.send(value); }
+            if (value?.byteLength) {
+              bytesDown += value.byteLength;
+              if (server.readyState === 1) server.send(value);
+              maybeFlush();
+            }
           }
-        } catch (_) {} finally { try { server.close(); } catch (_) {} await flush(); }
+        } catch (_) {} finally { try { server.close(); } catch (_) {} scheduleFlush(); }
       })();
       return true;
     } catch (_) {
@@ -376,11 +393,12 @@ async function handleVless(request, env) {
       if (remote) {
         const w = remote.writable.getWriter();
         await w.write(data); bytesUp += data.byteLength; w.releaseLock();
+        maybeFlush();
       }
     } catch (_) { try { server.close(); } catch (__) {} }
   });
-  server.addEventListener("close", async () => { try { remote?.close?.(); } catch (_) {} await flush(); });
-  server.addEventListener("error", async () => { try { remote?.close?.(); } catch (_) {} await flush(); });
+  server.addEventListener("close", () => { try { remote?.close?.(); } catch (_) {} scheduleFlush(); });
+  server.addEventListener("error", () => { try { remote?.close?.(); } catch (_) {} scheduleFlush(); });
   if (earlyData?.byteLength) { headerDone = true; await processHeader(earlyData); }
   return new Response(null, { status: 101, webSocket: client });
 }
@@ -389,9 +407,10 @@ async function handleVless(request, env) {
 function userUsageVars(user) {
   const usedNum = Number(user.used_gb) || 0;
   const limNum = Number(user.limit_gb) || 0;
-  const used = usedNum.toFixed(2);
+  const usedFmt = (n) => (n < 0.01 && n > 0 ? n.toFixed(4) : n.toFixed(2));
+  const used = usedFmt(usedNum);
   const lim = limNum > 0 ? limNum + " Gig" : "∞";
-  const remainGb = limNum > 0 ? Math.max(0, limNum - usedNum).toFixed(2) + " Gig" : "∞";
+  const remainGb = limNum > 0 ? usedFmt(Math.max(0, limNum - usedNum)) + " Gig" : "∞";
   let days = "∞";
   let expiryStr = "∞";
   let leftDays = -1;
@@ -488,21 +507,44 @@ function buildUserLinks(host, user, c) {
   return links;
 }
 
-async function handleSub(url, env) {
+function isBrowserRequest(request) {
+  const ua = (request.headers.get("User-Agent") || "").toLowerCase();
+  // known subscription / proxy clients → always return raw sub
+  if (/v2ray|clash|sing-box|singbox|hiddify|nekobox|nekoray|shadowrocket|streisand|quantumult|surge|loon|stash|surfboard|okhttp|go-http-client|dart\/|axios|curl|wget|python-requests|librev2ray/.test(ua)) {
+    return false;
+  }
+  // browsers
+  if (/mozilla|chrome|safari|firefox|edg|opr|crios|fxios/.test(ua)) return true;
+  const accept = (request.headers.get("Accept") || "").toLowerCase();
+  if (accept.includes("text/html") && !accept.includes("text/plain")) return true;
+  return false;
+}
+
+async function handleSub(url, env, request) {
   const name = (url.searchParams.get("sub") || "").trim();
   if (!name) return new Response("Missing ?sub=", { status: 400 });
   const user = await env.DB.prepare("SELECT * FROM users WHERE username=? COLLATE NOCASE OR uuid=?")
     .bind(name, name).first();
-  if (!user || user.is_active !== 1) return new Response("Not Found", { status: 404 });
+  if (!user) return new Response("Not Found", { status: 404 });
   const c = await cfg(env.DB);
+
+  // Browser → beautiful user status panel (like Marzban sub page)
+  if (request && isBrowserRequest(request)) {
+    return html(statusPage(user, c, url.origin));
+  }
+
+  if (user.is_active !== 1) return new Response("Not Found", { status: 404 });
   const links = buildUserLinks(url.hostname, user, c);
   const body = btoa(unescape(encodeURIComponent(links.join("\n"))));
   const expire = user.expiry_days > 0 ? Math.floor((user.created_at + user.expiry_days * 86400000) / 1000) : 0;
+  const download = Math.floor((user.used_gb || 0) * 1073741824);
+  const total = Math.floor((user.limit_gb || 0) * 1073741824);
   return new Response(body, {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Profile-Update-Interval": "6",
-      "Subscription-Userinfo": `upload=0; download=${Math.floor((user.used_gb || 0) * 1073741824)}; total=${Math.floor((user.limit_gb || 0) * 1073741824)}; expire=${expire}`,
+      "Subscription-Userinfo": `upload=0; download=${download}; total=${total}; expire=${expire}`,
+      "profile-title": encodeURIComponent((c.sub_prefix || "Leviko") + " · " + user.username),
     },
   });
 }
@@ -1220,7 +1262,8 @@ async function loadUsers() {
     var left = s.cf_left != null ? s.cf_left : '—';
     var used = s.cf_used != null ? s.cf_used : 0;
     var lim = s.cf_limit != null ? s.cf_limit : 100000;
-    $('sCf').textContent = used + ' / ' + lim;
+    // LTR mark so RTL layout doesn't reverse numbers
+    $('sCf').textContent = '\u200E' + used + ' / ' + lim;
     $('sCf').parentElement.querySelector('.l').textContent = 'درخواست CF · باقی ' + left;
   }
   if ($('killBanner')) $('killBanner').classList.toggle('on', !!s.kill);
@@ -1239,7 +1282,8 @@ async function loadUsers() {
     return;
   }
   tb.innerHTML = list.map(function (x) {
-    var used = (Number(x.used_gb) || 0).toFixed(2);
+    var usedNum = Number(x.used_gb) || 0;
+    var used = usedNum < 0.01 && usedNum > 0 ? usedNum.toFixed(4) : usedNum.toFixed(2);
     var lim = Number(x.limit_gb) > 0 ? x.limit_gb : '∞';
     var days = '∞';
     var isExp = false;
@@ -1703,8 +1747,19 @@ function camouflage() {
 }
 
 /* ─── router ─── */
+async function bumpCfReq(env, ctx) {
+  const run = async () => {
+    try {
+      const n = parseInt(await Store.get(env.DB, "cf_req_used", "0") || "0", 10) || 0;
+      await Store.set(env.DB, "cf_req_used", String(n + 1));
+    } catch (_) {}
+  };
+  if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(run());
+  else await run();
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (!env.DB) return new Response("D1 binding 'DB' missing", { status: 500 });
     try { await Store.init(env.DB); } catch (_) {}
 
@@ -1720,17 +1775,20 @@ export default {
       }
     } catch (_) {}
 
+    // count worker invocations (approx CF requests)
+    bumpCfReq(env, ctx);
+
     const url = new URL(request.url);
     const path = url.pathname;
+    const isWs = (request.headers.get("Upgrade") || "").toLowerCase() === "websocket";
 
-    if ((request.headers.get("Upgrade") || "").toLowerCase() === "websocket") return handleVless(request, env);
-    if ((path === WS || path.startsWith(WS + "/")) && (request.headers.get("Upgrade") || "").toLowerCase() === "websocket")
-      return handleVless(request, env);
+    if (isWs) return handleVless(request, env, ctx);
+    if ((path === WS || path.startsWith(WS + "/")) && isWs) return handleVless(request, env, ctx);
 
     if (path.startsWith("/api/")) return handleApi(request, url, env);
 
     if (path === ROOT || path === ROOT + "/") {
-      if (url.searchParams.has("sub")) return handleSub(url, env);
+      if (url.searchParams.has("sub")) return handleSub(url, env, request);
       if (url.searchParams.has("u") || url.searchParams.has("status")) {
         const name = (url.searchParams.get("u") || url.searchParams.get("status") || "").trim();
         if (name) {
