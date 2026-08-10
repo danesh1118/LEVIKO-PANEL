@@ -960,153 +960,347 @@ tr:hover td{background:rgba(255,255,255,.02)}
 </div></div>
 
 <script>
-const root=location.protocol+'//'+location.host;
-async function api(path,opts={}){
-  const r=await fetch('/api'+path,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}});
-  if(r.status===401){location.href='${DASH}';return null}
-  return r.json();
+const root = location.protocol + '//' + location.host;
+const $ = (id) => document.getElementById(id);
+
+async function api(path, opts = {}) {
+  try {
+    const r = await fetch('/api' + path, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+      credentials: 'same-origin'
+    });
+    if (r.status === 401) { location.href = '${DASH}'; return null; }
+    const j = await r.json().catch(() => ({}));
+    return j;
+  } catch (e) {
+    console.error('api', path, e);
+    return null;
+  }
 }
-function tab(n){
-  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.t===n));
-  document.querySelectorAll('.sec').forEach(s=>s.classList.toggle('on',s.id==='sec-'+n));
-  if(n==='adv'||n==='sys'||n==='tg')loadSettings();
-  if(n==='tg'){loadPlans();loadOrders()}
-  if(n==='sys')loadLogs();
+
+function tab(n) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.getAttribute('data-t') === n));
+  document.querySelectorAll('.sec').forEach(s => s.classList.toggle('on', s.id === 'sec-' + n));
+  if (n === 'adv' || n === 'sys' || n === 'tg') loadSettings();
+  if (n === 'tg') { loadPlans(); loadOrders(); }
+  if (n === 'sys') loadLogs();
 }
-async function logout(){await api('/logout',{method:'POST'});location.reload()}
-async function loadUsers(){
-  const s=await api('/stats');if(!s)return;
-  sUsers.textContent=s.users;sActive.textContent=s.active;sTraffic.textContent=s.traffic;sPending.textContent=s.pending||0;
-  killBanner.classList.toggle('on',!!s.kill);
-  const u=await api('/users');if(!u)return;
-  tbody.innerHTML=u.users.length?u.users.map(x=>{
-    const used=(x.used_gb||0).toFixed(2),lim=x.limit_gb>0?x.limit_gb:'∞';
-    let days='∞';
-    if(x.expiry_days>0){const left=Math.ceil((x.created_at+x.expiry_days*86400000-Date.now())/86400000);days=left>0?left:0}
-    const st=x.is_active?'<span class="badge badge-on">فعال</span>':'<span class="badge badge-off">قطع</span>';
-    const sub=root+'${ROOT}?sub='+encodeURIComponent(x.username);
-    return \`<tr><td><strong>\${x.username}</strong><br><span style="font-size:.68rem;color:var(--faint)">\${x.uuid.slice(0,8)}…</span></td>
-      <td>\${st}</td><td>\${used}/\${lim}</td><td>\${days}</td>
-      <td class="acts">
-        <button class="btn btn-g" onclick="copy('\${sub}')">ساب</button>
-        <button class="btn btn-g" onclick="toggle(\${x.id},\${x.is_active?0:1})">\${x.is_active?'قطع':'فعال'}</button>
-        <button class="btn btn-g" onclick="resetT(\${x.id})">ریست</button>
-        <button class="btn btn-d" onclick="del(\${x.id})">حذف</button></td></tr>\`;
-  }).join(''):'<tr><td colspan="5" class="empty">کاربری نیست</td></tr>';
+
+async function logout() {
+  await api('/logout', { method: 'POST' });
+  location.reload();
 }
-function openCreate(){fUser.value=fRemark.value='';fLimit.value=10;fDays.value=30;modal.classList.add('open')}
-function closeModal(){modal.classList.remove('open')}
-async function saveUser(){
-  const body={username:fUser.value.trim(),limit_gb:parseFloat(fLimit.value)||0,expiry_days:parseInt(fDays.value)||0,remark:fRemark.value.trim()};
-  if(!body.username){alert('نام لازم');return}
-  const r=await api('/users',{method:'POST',body:JSON.stringify(body)});
-  if(r?.error){alert(r.error);return}closeModal();loadUsers();
-}
-async function toggle(id,v){await api('/users/'+id,{method:'PATCH',body:JSON.stringify({is_active:v})});loadUsers()}
-async function resetT(id){await api('/users/'+id,{method:'PATCH',body:JSON.stringify({reset_traffic:true})});loadUsers()}
-async function del(id){if(!confirm('حذف؟'))return;await api('/users/'+id,{method:'DELETE'});loadUsers()}
-function copy(t){navigator.clipboard.writeText(t).then(()=>alert('کپی شد')).catch(()=>prompt('کپی',t))}
-const NAME_VARS=['FLAG','COUNTRY','CITY','ISP','PROTOCOL','USER','PORT','PREFIX','IP','IP_NAME','HOST'];
-function renderChips(){
-  const box=document.getElementById('varChips');if(!box)return;
-  box.innerHTML=NAME_VARS.map(function(v){
-    return '<button type="button" class="btn btn-g" style="padding:5px 10px;font-size:.72rem;font-family:monospace" onclick="insertVar(\'{'+v+'}\')">{'+v+'</button>';
+
+async function loadUsers() {
+  const s = await api('/stats');
+  if (!s) return;
+  if ($('sUsers')) $('sUsers').textContent = s.users ?? '—';
+  if ($('sActive')) $('sActive').textContent = s.active ?? '—';
+  if ($('sTraffic')) $('sTraffic').textContent = s.traffic ?? '—';
+  if ($('sPending')) $('sPending').textContent = s.pending ?? 0;
+  if ($('killBanner')) $('killBanner').classList.toggle('on', !!s.kill);
+
+  const u = await api('/users');
+  const tb = $('tbody');
+  if (!tb) return;
+  if (!u || !u.users || !u.users.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty">کاربری نیست</td></tr>';
+    return;
+  }
+  tb.innerHTML = u.users.map(function (x) {
+    var used = (x.used_gb || 0).toFixed(2);
+    var lim = x.limit_gb > 0 ? x.limit_gb : '∞';
+    var days = '∞';
+    if (x.expiry_days > 0) {
+      var left = Math.ceil((x.created_at + x.expiry_days * 86400000 - Date.now()) / 86400000);
+      days = left > 0 ? left : 0;
+    }
+    var st = x.is_active
+      ? '<span class="badge badge-on">فعال</span>'
+      : '<span class="badge badge-off">قطع</span>';
+    var sub = root + '${ROOT}?sub=' + encodeURIComponent(x.username);
+    return '<tr><td><strong>' + x.username + '</strong><br><span style="font-size:.68rem;color:var(--faint)">' +
+      String(x.uuid).slice(0, 8) + '…</span></td><td>' + st + '</td><td>' + used + '/' + lim +
+      '</td><td>' + days + '</td><td class="acts">' +
+      '<button type="button" class="btn btn-g" data-sub="' + sub.replace(/"/g, '') + '">ساب</button>' +
+      '<button type="button" class="btn btn-g" data-toggle="' + x.id + '" data-v="' + (x.is_active ? 0 : 1) + '">' +
+      (x.is_active ? 'قطع' : 'فعال') + '</button>' +
+      '<button type="button" class="btn btn-g" data-reset="' + x.id + '">ریست</button>' +
+      '<button type="button" class="btn btn-d" data-del="' + x.id + '">حذف</button></td></tr>';
   }).join('');
+
+  tb.onclick = function (ev) {
+    var t = ev.target.closest('button');
+    if (!t) return;
+    if (t.dataset.sub) copy(t.dataset.sub);
+    if (t.dataset.toggle) toggle(+t.dataset.toggle, +t.dataset.v);
+    if (t.dataset.reset) resetT(+t.dataset.reset);
+    if (t.dataset.del) del(+t.dataset.del);
+  };
 }
-function insertVar(v){
-  const el=document.getElementById('nameTpl');
-  const start=el.selectionStart||el.value.length,end=el.selectionEnd||start;
-  el.value=el.value.slice(0,start)+v+el.value.slice(end);
-  el.focus();el.setSelectionRange(start+v.length,start+v.length);
+
+function openCreate() {
+  if ($('fUser')) $('fUser').value = '';
+  if ($('fRemark')) $('fRemark').value = '';
+  if ($('fLimit')) $('fLimit').value = 10;
+  if ($('fDays')) $('fDays').value = 30;
+  if ($('modal')) $('modal').classList.add('open');
 }
-function renderInfoRows(list){
-  const box=document.getElementById('infoList');if(!box)return;
-  if(!list.length)list=['📊 {usage}','⏳ {expiry}'];
-  box.innerHTML=list.map(function(t,i){
-    return '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">'
-      +'<input data-info="'+i+'" value="'+String(t).replace(/"/g,'&quot;')+'" dir="ltr" style="text-align:left;flex:1">'
-      +'<button type="button" class="btn btn-d" style="padding:6px 10px" onclick="this.parentElement.remove()">×</button></div>';
+function closeModal() {
+  if ($('modal')) $('modal').classList.remove('open');
+}
+
+async function saveUser() {
+  var body = {
+    username: ($('fUser') && $('fUser').value || '').trim(),
+    limit_gb: parseFloat($('fLimit') && $('fLimit').value) || 0,
+    expiry_days: parseInt($('fDays') && $('fDays').value, 10) || 0,
+    remark: ($('fRemark') && $('fRemark').value || '').trim()
+  };
+  if (!body.username) { alert('نام لازم است'); return; }
+  var r = await api('/users', { method: 'POST', body: JSON.stringify(body) });
+  if (r && r.error) { alert(r.error); return; }
+  closeModal();
+  loadUsers();
+}
+
+async function toggle(id, v) {
+  await api('/users/' + id, { method: 'PATCH', body: JSON.stringify({ is_active: v }) });
+  loadUsers();
+}
+async function resetT(id) {
+  await api('/users/' + id, { method: 'PATCH', body: JSON.stringify({ reset_traffic: true }) });
+  loadUsers();
+}
+async function del(id) {
+  if (!confirm('حذف شود؟')) return;
+  await api('/users/' + id, { method: 'DELETE' });
+  loadUsers();
+}
+function copy(t) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t).then(function () { alert('کپی شد'); }).catch(function () { prompt('کپی', t); });
+  } else prompt('کپی', t);
+}
+
+var NAME_VARS = ['FLAG', 'COUNTRY', 'CITY', 'ISP', 'PROTOCOL', 'USER', 'PORT', 'PREFIX', 'IP', 'IP_NAME', 'HOST'];
+
+function renderChips() {
+  var box = $('varChips');
+  if (!box) return;
+  box.innerHTML = NAME_VARS.map(function (v) {
+    return '<button type="button" class="btn btn-g" style="padding:5px 10px;font-size:.72rem;font-family:monospace" data-var="{' + v + '}">' + v + '</button>';
   }).join('');
+  box.onclick = function (ev) {
+    var b = ev.target.closest('button[data-var]');
+    if (b) insertVar(b.getAttribute('data-var'));
+  };
 }
-function addInfoRow(){
-  const box=document.getElementById('infoList');
-  const i=box.children.length;
-  const div=document.createElement('div');
-  div.style.cssText='display:flex;gap:8px;margin-bottom:8px;align-items:center';
-  div.innerHTML='<input data-info="'+i+'" value="" dir="ltr" style="text-align:left;flex:1" placeholder="{usage} / {expiry}">'
-    +'<button type="button" class="btn btn-d" style="padding:6px 10px" onclick="this.parentElement.remove()">×</button>';
+
+function insertVar(v) {
+  var el = $('nameTpl');
+  if (!el) return;
+  var start = el.selectionStart || el.value.length;
+  var end = el.selectionEnd || start;
+  el.value = el.value.slice(0, start) + v + el.value.slice(end);
+  el.focus();
+  try { el.setSelectionRange(start + v.length, start + v.length); } catch (e) {}
+}
+
+function renderInfoRows(list) {
+  var box = $('infoList');
+  if (!box) return;
+  if (!list || !list.length) list = ['📊 {usage}', '⏳ {expiry}'];
+  box.innerHTML = list.map(function (t, i) {
+    return '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">' +
+      '<input data-info="' + i + '" value="' + String(t).replace(/"/g, '&quot;') + '" dir="ltr" style="text-align:left;flex:1">' +
+      '<button type="button" class="btn btn-d" style="padding:6px 10px" data-rm="1">×</button></div>';
+  }).join('');
+  box.onclick = function (ev) {
+    if (ev.target.getAttribute('data-rm')) ev.target.parentElement.remove();
+  };
+}
+
+function addInfoRow() {
+  var box = $('infoList');
+  if (!box) return;
+  var div = document.createElement('div');
+  div.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;align-items:center';
+  div.innerHTML = '<input value="" dir="ltr" style="text-align:left;flex:1" placeholder="{usage} / {expiry}">' +
+    '<button type="button" class="btn btn-d" style="padding:6px 10px" data-rm="1">×</button>';
   box.appendChild(div);
 }
-function collectInfo(){
-  return [...document.querySelectorAll('#infoList input')].map(i=>i.value.trim()).filter(Boolean);
+
+function collectInfo() {
+  return Array.prototype.map.call(document.querySelectorAll('#infoList input'), function (i) {
+    return i.value.trim();
+  }).filter(Boolean);
 }
-async function loadSettings(){
-  const s=await api('/settings');if(!s)return;
-  cleanIps.value=s.clean_ips||'';upstream.value=s.upstream||'';
-  protocol.value=s.protocol||'vless';ports.value=s.ports||'443,80';
-  subPrefix.value=s.sub_prefix||'Leviko';
-  if(document.getElementById('nameTpl'))nameTpl.value=s.name_template||'{PREFIX} · {USER} · {IP_NAME}';
+
+async function loadSettings() {
+  var s = await api('/settings');
+  if (!s) return;
+  if ($('cleanIps')) $('cleanIps').value = s.clean_ips || '';
+  if ($('upstream')) $('upstream').value = s.upstream || '';
+  if ($('protocol')) $('protocol').value = s.protocol || 'vless';
+  if ($('ports')) $('ports').value = s.ports || '443,80';
+  if ($('subPrefix')) $('subPrefix').value = s.sub_prefix || 'Leviko';
+  if ($('nameTpl')) $('nameTpl').value = s.name_template || '{PREFIX} · {USER} · {IP_NAME}';
   renderChips();
-  renderInfoRows(Array.isArray(s.info_entries)?s.info_entries:[]);
-  panelTitle.value=s.title||s.panel_title||'Leviko';killSwitch.checked=!!s.kill;
-  setUser.value=s.admin_user||'';title.textContent=panelTitle.value;
-  tgToken.value=s.tg_token||'';tgAdmin.value=s.tg_admin||'';
-  tgWelcome.value=s.tg_welcome||'';payCard.value=s.card||s.pay_card||'';
+  renderInfoRows(Array.isArray(s.info_entries) ? s.info_entries : []);
+  if ($('panelTitle')) $('panelTitle').value = s.title || s.panel_title || 'Leviko';
+  if ($('killSwitch')) $('killSwitch').checked = !!s.kill;
+  if ($('setUser')) $('setUser').value = s.admin_user || '';
+  if ($('title')) $('title').textContent = ($('panelTitle') && $('panelTitle').value) || 'Leviko';
+  if ($('tgToken')) $('tgToken').value = s.tg_token || '';
+  if ($('tgAdmin')) $('tgAdmin').value = s.tg_admin || '';
+  if ($('tgWelcome')) $('tgWelcome').value = s.tg_welcome || '';
+  if ($('payCard')) $('payCard').value = s.card || s.pay_card || '';
 }
-async function saveAdv(){
-  await api('/settings',{method:'POST',body:JSON.stringify({
-    clean_ips:cleanIps.value,upstream:upstream.value,protocol:protocol.value,
-    ports:ports.value,sub_prefix:subPrefix.value,
-    name_template:nameTpl.value,
-    info_entries:collectInfo(),
-    info_cfg:collectInfo().length>0
-  })});alert('ذخیره شد');
+
+async function saveAdv() {
+  await api('/settings', {
+    method: 'POST',
+    body: JSON.stringify({
+      clean_ips: $('cleanIps') ? $('cleanIps').value : '',
+      upstream: $('upstream') ? $('upstream').value : '',
+      protocol: $('protocol') ? $('protocol').value : 'vless',
+      ports: $('ports') ? $('ports').value : '443,80',
+      sub_prefix: $('subPrefix') ? $('subPrefix').value : 'Leviko',
+      name_template: $('nameTpl') ? $('nameTpl').value : '',
+      info_entries: collectInfo(),
+      info_cfg: collectInfo().length > 0
+    })
+  });
+  alert('ذخیره شد');
 }
-async function saveSys(){
-  await api('/settings',{method:'POST',body:JSON.stringify({panel_title:panelTitle.value,kill_switch:killSwitch.checked})});
-  if(setUser.value.trim()||setPass.value)await api('/admin',{method:'POST',body:JSON.stringify({username:setUser.value.trim(),password:setPass.value})});
-  alert('ذخیره شد');loadUsers();
+
+async function saveSys() {
+  await api('/settings', {
+    method: 'POST',
+    body: JSON.stringify({
+      panel_title: $('panelTitle') ? $('panelTitle').value : '',
+      kill_switch: $('killSwitch') ? $('killSwitch').checked : false
+    })
+  });
+  var user = $('setUser') ? $('setUser').value.trim() : '';
+  var pass = $('setPass') ? $('setPass').value : '';
+  if (user || pass) {
+    await api('/admin', { method: 'POST', body: JSON.stringify({ username: user, password: pass }) });
+  }
+  alert('ذخیره شد');
+  loadUsers();
 }
-async function saveTg(){
-  await api('/settings',{method:'POST',body:JSON.stringify({
-    tg_token:tgToken.value.trim(),tg_admin:tgAdmin.value.trim(),
-    tg_welcome:tgWelcome.value,pay_card:payCard.value.trim()
-  })});alert('ذخیره شد');
+
+async function saveTg() {
+  await api('/settings', {
+    method: 'POST',
+    body: JSON.stringify({
+      tg_token: $('tgToken') ? $('tgToken').value.trim() : '',
+      tg_admin: $('tgAdmin') ? $('tgAdmin').value.trim() : '',
+      tg_welcome: $('tgWelcome') ? $('tgWelcome').value : '',
+      pay_card: $('payCard') ? $('payCard').value.trim() : ''
+    })
+  });
+  alert('ذخیره شد');
 }
-async function setHook(){
-  const r=await api('/tg-webhook',{method:'POST',body:'{}'});
-  alert(r?.ok||r?.result?'Webhook فعال شد':(r?.description||JSON.stringify(r)));
+
+async function setHook() {
+  var r = await api('/tg-webhook', { method: 'POST', body: '{}' });
+  alert((r && (r.ok || r.result)) ? 'Webhook فعال شد' : JSON.stringify(r));
 }
-async function loadPlans(){
-  const r=await api('/plans');if(!r)return;
-  planList.innerHTML=(r.plans||[]).map(p=>\`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)">
-    <span>\${p.title} · \${p.gb}GB · \${p.days}روز · \${Number(p.price).toLocaleString('fa-IR')}ت</span>
-    <button class="btn btn-d" style="padding:4px 8px;font-size:.7rem" onclick="delPlan(\${p.id})">حذف</button></div>\`).join('')||'<div class="empty">پلنی نیست</div>';
+
+async function loadPlans() {
+  var r = await api('/plans');
+  var box = $('planList');
+  if (!box) return;
+  if (!r || !r.plans || !r.plans.length) {
+    box.innerHTML = '<div class="empty">پلنی نیست</div>';
+    return;
+  }
+  box.innerHTML = r.plans.map(function (p) {
+    return '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)">' +
+      '<span>' + p.title + ' · ' + p.gb + 'GB · ' + p.days + 'روز · ' + Number(p.price).toLocaleString('fa-IR') + 'ت</span>' +
+      '<button type="button" class="btn btn-d" style="padding:4px 8px;font-size:.7rem" data-plan-del="' + p.id + '">حذف</button></div>';
+  }).join('');
+  box.onclick = function (ev) {
+    var b = ev.target.closest('[data-plan-del]');
+    if (b) delPlan(+b.getAttribute('data-plan-del'));
+  };
 }
-async function addPlan(){
-  await api('/plans',{method:'POST',body:JSON.stringify({title:planTitle.value,price:+planPrice.value,gb:+planGb.value,days:+planDays.value})});
+
+async function addPlan() {
+  await api('/plans', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: $('planTitle') ? $('planTitle').value : 'Plan',
+      price: $('planPrice') ? +$('planPrice').value : 0,
+      gb: $('planGb') ? +$('planGb').value : 10,
+      days: $('planDays') ? +$('planDays').value : 30
+    })
+  });
   loadPlans();
 }
-async function delPlan(id){await api('/plans/'+id,{method:'DELETE'});loadPlans()}
-async function loadOrders(){
-  const r=await api('/orders');if(!r)return;
-  orderList.innerHTML=(r.orders||[]).slice(0,20).map(o=>\`#\${o.id} · tg:\${o.tg_id} · \${o.status} · \${o.username||'-'}\`).join('<br>')||'خالی';
+
+async function delPlan(id) {
+  await api('/plans/' + id, { method: 'DELETE' });
+  loadPlans();
 }
-async function loadLogs(){
-  const r=await api('/logs');if(!r)return;
-  logBox.innerHTML=(r.logs||[]).map(l=>\`\${new Date(l.ts).toLocaleString('fa-IR')} — \${l.action} \${l.detail||''}\`).join('<br>')||'—';
+
+async function loadOrders() {
+  var r = await api('/orders');
+  var box = $('orderList');
+  if (!box) return;
+  if (!r || !r.orders || !r.orders.length) {
+    box.textContent = 'خالی';
+    return;
+  }
+  box.innerHTML = r.orders.slice(0, 20).map(function (o) {
+    return '#' + o.id + ' · tg:' + o.tg_id + ' · ' + o.status + ' · ' + (o.username || '-');
+  }).join('<br>');
 }
-async function doExport(){
-  const r=await api('/export');if(!r)return;
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(r,null,2)],{type:'application/json'}));
-  a.download='leviko.json';a.click();
+
+async function loadLogs() {
+  var r = await api('/logs');
+  var box = $('logBox');
+  if (!box) return;
+  if (!r || !r.logs || !r.logs.length) {
+    box.textContent = '—';
+    return;
+  }
+  box.innerHTML = r.logs.map(function (l) {
+    return new Date(l.ts).toLocaleString('fa-IR') + ' — ' + l.action + ' ' + (l.detail || '');
+  }).join('<br>');
 }
-async function doImport(ev){
-  const f=ev.target.files[0];if(!f)return;
-  const data=JSON.parse(await f.text());
-  const r=await api('/import',{method:'POST',body:JSON.stringify(data)});
-  alert('وارد شد: '+(r?.imported||0));loadUsers();
+
+async function doExport() {
+  var r = await api('/export');
+  if (!r) return;
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' }));
+  a.download = 'leviko.json';
+  a.click();
 }
+
+async function doImport(ev) {
+  var f = ev.target.files[0];
+  if (!f) return;
+  try {
+    var data = JSON.parse(await f.text());
+    var r = await api('/import', { method: 'POST', body: JSON.stringify(data) });
+    alert('وارد شد: ' + ((r && r.imported) || 0));
+    loadUsers();
+  } catch (e) {
+    alert('فایل نامعتبر');
+  }
+}
+
+// wire static buttons that use onclick in HTML still work (global functions)
+document.addEventListener('DOMContentLoaded', function () {
+  loadUsers();
+});
+// also run immediately (DOM already parsed when script is at end)
 loadUsers();
 </script></body></html>`;
 }
