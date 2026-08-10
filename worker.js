@@ -9,6 +9,7 @@ const V = "3.0.0";
 const ROOT = "/8080";
 const DASH = "/8080/dash";
 const WS = "/lv";
+const LOGO = "https://avatars.githubusercontent.com/u/221537174?v=4";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -1650,13 +1651,12 @@ function authPage(setup) {
   return `<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Leviko</title><style>${css()}
 .box{max-width:400px;margin:12vh auto;padding:34px 28px;text-align:center}
-.logo{width:68px;height:68px;margin:0 auto 16px;border-radius:20px;background:linear-gradient(145deg,#c4b5fd,#7c3aed);
-display:grid;place-items:center;font-size:1.7rem;font-weight:900;color:#fff;box-shadow:0 14px 40px rgba(139,92,246,.45);
+.logo{width:68px;height:68px;margin:0 auto 16px;border-radius:20px;overflow:hidden;box-shadow:0 14px 40px rgba(139,92,246,.35);background:#111;
 transform:perspective(420px) rotateY(-10deg) rotateX(8deg)}
 h1{font-size:1.4rem;font-weight:800;margin-bottom:6px}p{color:var(--mut);margin-bottom:16px}
 .field{text-align:right;margin-bottom:12px}.err{color:var(--err);font-size:.85rem;margin-top:10px;display:none}
 </style></head><body><div class="scene"><div class="glass box">
-<div class="logo">L</div><h1>Leviko</h1><p>${setup ? "ساخت حساب ادمین" : "ورود به پنل"}</p>
+<div class="logo"><img src="${LOGO}" alt="logo" width="68" height="68" style="width:100%;height:100%;object-fit:cover;border-radius:20px;display:block"></div><h1>Leviko</h1><p>${setup ? "ساخت حساب ادمین" : "ورود به پنل"}</p>
 <div class="field"><label>نام کاربری</label><input id="user" value="${setup ? "admin" : ""}"></div>
 <div class="field"><label>رمز عبور</label><input type="password" id="pass" onkeydown="if(event.key==='Enter')go()"></div>
 ${setup ? '<div class="field"><label>تکرار رمز</label><input type="password" id="pass2"></div>' : ""}
@@ -1677,8 +1677,7 @@ function panelPage() {
 <title>Leviko Panel</title><style>${css()}
 .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px}
 .brand{display:flex;align-items:center;gap:12px}
-.brand .mark{width:46px;height:46px;border-radius:15px;background:linear-gradient(145deg,#c4b5fd,#7c3aed);
-display:grid;place-items:center;font-weight:900;color:#fff;box-shadow:0 10px 28px rgba(139,92,246,.4);
+.brand .mark{width:46px;height:46px;border-radius:15px;overflow:hidden;box-shadow:0 10px 28px rgba(139,92,246,.35);background:#111;flex-shrink:0;
 transform:perspective(320px) rotateY(-12deg) rotateX(6deg)}
 .brand h1{font-size:1.2rem;font-weight:800}.brand span{font-size:.7rem;color:var(--mut);letter-spacing:.08em}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
@@ -1721,7 +1720,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 @media(max-width:720px){.stats{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}.ip-row{flex-direction:column}}
 </style></head><body><div class="scene">
 <div class="top">
-  <div class="brand"><div class="mark">L</div><div><h1 id="title">Leviko</h1><span>PANEL · v${V}</span></div></div>
+  <div class="brand"><div class="mark"><img src="${LOGO}" alt="logo" width="46" height="46" style="width:100%;height:100%;object-fit:cover;border-radius:15px;display:block"></div><div><h1 id="title">Leviko</h1><span>PANEL · v${V}</span></div></div>
   <button class="btn btn-g" onclick="logout()">خروج</button>
 </div>
 <div class="kill" id="killBanner">⚠ Kill Switch فعال — ترافیک پروکسی متوقف است</div>
@@ -2318,7 +2317,7 @@ body{font-family:Vazirmatn,system-ui,sans-serif;background:var(--bg);color:var(-
 body::before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 55% 40% at 15% 0%,rgba(139,92,246,.22),transparent 55%),radial-gradient(ellipse 45% 35% at 90% 100%,rgba(52,211,153,.07),transparent 50%)}
 .wrap{position:relative;z-index:1;max-width:520px;margin:0 auto;padding:24px 16px 60px}
 .brand{text-align:center;margin-bottom:22px}
-.brand .logo{width:64px;height:64px;margin:0 auto 12px;border-radius:18px;background:linear-gradient(145deg,#c4b5fd,#7c3aed);display:grid;place-items:center;font-size:1.6rem;font-weight:900;color:#fff;box-shadow:0 12px 36px rgba(139,92,246,.4)}
+.brand .logo{width:64px;height:64px;margin:0 auto 12px;border-radius:18px;overflow:hidden;box-shadow:0 12px 36px rgba(139,92,246,.35);background:#111}
 .brand h1{font-size:1.35rem;font-weight:800}.brand p{color:var(--mut);font-size:.88rem}
 .card{background:linear-gradient(155deg,rgba(255,255,255,.06),rgba(255,255,255,.015));border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:14px;backdrop-filter:blur(20px)}
 .card h3{font-size:.95rem;font-weight:800;margin-bottom:12px;color:#c4b5fd}
@@ -2346,7 +2345,7 @@ body::before{content:'';position:fixed;inset:0;pointer-events:none;background:ra
 .foot{text-align:center;margin-top:20px;color:var(--mut);font-size:.75rem}
 </style></head><body><div class="wrap">
 <div class="brand">
-  <div class="logo">L</div>
+  <div class="logo"><img src="${LOGO}" alt="logo" width="64" height="64" style="width:100%;height:100%;object-fit:cover;border-radius:18px;display:block"></div>
   <h1>${title}</h1>
   <p>پنل کاربری · ${user.username}</p>
 </div>
