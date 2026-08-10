@@ -96,13 +96,23 @@ async function token(db) {
 
 /* ─── settings helpers ─── */
 async function cfg(db) {
+  let info_entries = [];
+  try { info_entries = JSON.parse(await Store.get(db, "info_entries", "[]") || "[]"); } catch (_) { info_entries = []; }
+  if (!Array.isArray(info_entries)) info_entries = [];
+  // default info rows if empty and legacy flag on
+  const legacyInfo = (await Store.get(db, "info_cfg", "1")) !== "0";
+  if (!info_entries.length && legacyInfo) {
+    info_entries = ["📊 {usage}", "⏳ {expiry}"];
+  }
   return {
     protocol: (await Store.get(db, "protocol", "vless")) || "vless",
     ports: (await Store.get(db, "ports", "443,80")) || "443,80",
     clean_ips: (await Store.get(db, "clean_ips", "")) || "",
     upstream: (await Store.get(db, "upstream", "")) || "",
     sub_prefix: (await Store.get(db, "sub_prefix", "Leviko")) || "Leviko",
-    info_cfg: (await Store.get(db, "info_cfg", "1")) !== "0",
+    name_template: (await Store.get(db, "name_template", "{PREFIX} · {USER} · {IP_NAME}")) || "{PREFIX} · {USER} · {IP_NAME}",
+    info_entries,
+    info_cfg: legacyInfo,
     kill: (await Store.get(db, "kill_switch", "0")) === "1",
     title: (await Store.get(db, "panel_title", "Leviko")) || "Leviko",
     tg_token: (await Store.get(db, "tg_token", "")) || "",
@@ -110,6 +120,30 @@ async function cfg(db) {
     tg_welcome: (await Store.get(db, "tg_welcome", "به ربات فروش Leviko خوش آمدید")) || "",
     card: (await Store.get(db, "pay_card", "")) || "",
   };
+}
+
+/** Parse clean IP lines: IP or IP#Name or IP Name */
+function parseCleanLines(raw) {
+  const out = [];
+  for (const line of String(raw || "").split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    let ip = t, name = "";
+    if (t.includes("#")) {
+      const i = t.indexOf("#");
+      ip = t.slice(0, i).trim();
+      name = t.slice(i + 1).trim();
+    } else {
+      const m = t.match(/^(\S+)\s+(.+)$/);
+      if (m) { ip = m[1]; name = m[2].trim(); }
+    }
+    if (ip) out.push({ ip, name: name || ip });
+  }
+  return out.slice(0, 40);
+}
+
+function applyTemplate(tpl, vars) {
+  return String(tpl || "").replace(/\{([A-Z_]+)\}/g, (_, k) => (vars[k] != null && vars[k] !== "" ? String(vars[k]) : ""));
 }
 
 /* ─── VLESS proxy ─── */
@@ -211,35 +245,60 @@ async function handleVless(request, env) {
 }
 
 /* ─── subscription builder ─── */
-function tag(prefix, parts) {
-  return encodeURIComponent([prefix, ...parts.filter(Boolean)].join(" · "));
-}
-
-function infoLine(user, prefix) {
+function userUsageVars(user) {
   const used = (user.used_gb || 0).toFixed(2);
   const lim = user.limit_gb > 0 ? user.limit_gb + "GB" : "∞";
   let days = "∞";
+  let expiryStr = "∞";
   if (user.expiry_days > 0) {
     const left = Math.ceil((user.created_at + user.expiry_days * 86400000 - Date.now()) / 86400000);
-    days = (left > 0 ? left : 0) + "d";
+    days = String(left > 0 ? left : 0);
+    expiryStr = days + "d";
   }
-  // non-working display-only entry (invalid host) — clients show the name
-  const name = tag(prefix, [`📊 ${used}/${lim}`, `⏳ ${days}`, user.username]);
+  return {
+    usage: used + "/" + lim,
+    expiry: expiryStr,
+    days,
+    USER: user.username,
+  };
+}
+
+function infoLineFromTemplate(tpl, user, prefix) {
+  const uv = userUsageVars(user);
+  const name = encodeURIComponent(applyTemplate(tpl, {
+    PREFIX: prefix, USER: uv.USER, usage: uv.usage, expiry: uv.expiry,
+    USAGE: uv.usage, EXPIRY: uv.expiry, DAYS: uv.days,
+  }));
   return `vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1?encryption=none&security=none&type=ws&path=%2F#${name}`;
 }
 
 function buildUserLinks(host, user, c) {
   const path = encodeURIComponent(WS);
   const ports = (c.ports || "443,80").split(/[,\s]+/).map((p) => parseInt(p, 10)).filter((p) => p > 0 && p < 65536);
-  const ips = (c.clean_ips || "").split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).slice(0, 40);
+  const clean = parseCleanLines(c.clean_ips);
   const protocol = (c.protocol || "vless").toLowerCase();
+  const tpl = c.name_template || "{PREFIX} · {USER} · {IP_NAME}";
+  const prefix = c.sub_prefix || "Leviko";
   const links = [];
 
-  // info config first
-  if (c.info_cfg) links.push(infoLine(user, c.sub_prefix));
+  // custom info entries (display-only)
+  const entries = Array.isArray(c.info_entries) ? c.info_entries : [];
+  for (const e of entries) {
+    if (e && String(e).trim()) links.push(infoLineFromTemplate(String(e).trim(), user, prefix));
+  }
 
-  const make = (addr, port, tls) => {
-    const name = tag(c.sub_prefix, [user.username, addr === host ? "" : addr, String(port)]);
+  const make = (addr, port, tls, ipName) => {
+    const vars = {
+      PREFIX: prefix,
+      USER: user.username,
+      PORT: String(port),
+      PROTOCOL: protocol.toUpperCase(),
+      HOST: host,
+      IP: addr,
+      IP_NAME: ipName || (addr === host ? "Core" : addr),
+      FLAG: "", COUNTRY: "", CITY: "", ISP: "",
+    };
+    const name = encodeURIComponent(applyTemplate(tpl, vars).replace(/\s·\s$/g, "").replace(/^\s·\s/g, "").trim() || prefix);
     if (protocol === "trojan") {
       const sec = tls ? "tls" : "none";
       const sni = tls ? `&sni=${host}&fp=chrome` : "";
@@ -250,21 +309,18 @@ function buildUserLinks(host, user, c) {
     return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=${sec}${sni}&type=ws&host=${host}&path=${path}#${name}`;
   };
 
-  if (ips.length) {
-    // only clean IPs when provided
-    for (const ip of ips) {
-      for (const port of ports.length ? ports : [443]) {
-        links.push(make(ip, port, port === 443 || port === 8443));
+  if (clean.length) {
+    for (const row of clean) {
+      for (const port of (ports.length ? ports : [443])) {
+        links.push(make(row.ip, port, port === 443 || port === 8443, row.name));
       }
     }
   } else {
-    // default: one working config on worker host
     const mainPort = ports.includes(443) ? 443 : (ports[0] || 443);
-    links.push(make(host, mainPort, mainPort === 443 || mainPort === 8443));
-    if (ports.includes(80) && mainPort !== 80) links.push(make(host, 80, false));
+    links.push(make(host, mainPort, mainPort === 443 || mainPort === 8443, "Core"));
+    if (ports.includes(80) && mainPort !== 80) links.push(make(host, 80, false, "Core-80"));
   }
 
-  // upstream extra configs (raw share links, one per line)
   const up = (c.upstream || "").split("\n").map((s) => s.trim()).filter((s) => /^(vless|trojan|vmess|ss):\/\//i.test(s));
   for (const line of up.slice(0, 50)) links.push(line);
 
@@ -582,11 +638,15 @@ async function handleApi(request, url, env) {
     const body = await request.json().catch(() => ({}));
     const map = {
       protocol: "protocol", ports: "ports", clean_ips: "clean_ips", upstream: "upstream",
-      sub_prefix: "sub_prefix", panel_title: "panel_title",
+      sub_prefix: "sub_prefix", panel_title: "panel_title", name_template: "name_template",
       tg_token: "tg_token", tg_admin: "tg_admin", tg_welcome: "tg_welcome", pay_card: "pay_card",
     };
     for (const [k, sk] of Object.entries(map)) {
       if (body[k] !== undefined) await Store.set(env.DB, sk, String(body[k]));
+    }
+    if (body.info_entries !== undefined) {
+      const arr = Array.isArray(body.info_entries) ? body.info_entries.map(String).slice(0, 20) : [];
+      await Store.set(env.DB, "info_entries", JSON.stringify(arr));
     }
     if (body.info_cfg !== undefined) await Store.set(env.DB, "info_cfg", body.info_cfg ? "1" : "0");
     if (body.kill_switch !== undefined) {
@@ -791,31 +851,40 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <div class="sec" id="sec-adv">
   <div class="grid2">
     <div class="glass card-in">
-      <h4>شبکه و DNS</h4>
-      <div class="field"><label>Clean IP / Host (هر خط یکی)</label>
-        <textarea id="cleanIps" rows="6" placeholder="1.2.3.4&#10;cf.example.com"></textarea></div>
-      <p style="font-size:.75rem;color:var(--faint)">با افزودن IP تمیز، کانفیگ پیش‌فرض هاست حذف و فقط IPها در ساب می‌آیند.</p>
+      <h4>🌐 شبکه و DNS — IP تمیز</h4>
+      <div class="field"><label>هر خط: IP یا IP#نام</label>
+        <textarea id="cleanIps" rows="7" placeholder="1.2.3.4#Tehran&#10;5.6.7.8#Germany&#10;cf.example.com"></textarea></div>
+      <p style="font-size:.75rem;color:var(--faint)">فرمت <code>IP#نام</code> → نام در <code>{IP_NAME}</code> می‌آید. با پر شدن این لیست، کانفیگ پیش‌فرض Core حذف می‌شود.</p>
     </div>
     <div class="glass card-in">
-      <h4>آپ‌استریم</h4>
-      <div class="field"><label>لینک‌های کانفیگ اضافه (هر خط یکی)</label>
-        <textarea id="upstream" rows="6" placeholder="vless://...&#10;trojan://..."></textarea></div>
-      <p style="font-size:.75rem;color:var(--faint)">لینک‌های خارجی به انتهای سابسکریپشن اضافه می‌شوند.</p>
+      <h4>🔗 آپ‌استریم</h4>
+      <div class="field"><label>لینک کانفیگ اضافه (هر خط)</label>
+        <textarea id="upstream" rows="7" placeholder="vless://...&#10;trojan://..."></textarea></div>
+      <p style="font-size:.75rem;color:var(--faint)">به انتهای ساب اضافه می‌شود.</p>
     </div>
   </div>
+
   <div class="glass card-in" style="margin-top:12px">
-    <h4>اشتراک و پروتکل</h4>
+    <h4>✏️ اشتراک — نام‌گذاری کانفیگ</h4>
+    <div class="field"><label>قالب نام</label>
+      <input id="nameTpl" dir="ltr" style="text-align:left" placeholder="{PREFIX} · {USER} · {IP_NAME}"></div>
+    <div id="varChips" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 12px"></div>
     <div class="grid2">
+      <div class="field"><label>پیشوند {PREFIX}</label><input id="subPrefix" placeholder="Leviko"></div>
       <div class="field"><label>پروتکل</label>
         <select id="protocol"><option value="vless">VLESS</option><option value="trojan">Trojan</option></select></div>
-      <div class="field"><label>پورت‌ها (با ویرگول)</label><input id="ports" placeholder="443,80"></div>
-      <div class="field"><label>پیشوند نام کانفیگ</label><input id="subPrefix" placeholder="Leviko"></div>
-      <div class="field" style="display:flex;align-items:center;gap:10px;padding-top:22px">
-        <input type="checkbox" id="infoCfg" style="width:auto"><label for="infoCfg" style="margin:0">کانفیگ نمایش حجم/زمان</label>
-      </div>
+      <div class="field"><label>پورت‌ها</label><input id="ports" placeholder="443,80"></div>
     </div>
-    <button class="btn btn-a" style="margin-top:12px" onclick="saveAdv()">ذخیره پیشرفته</button>
   </div>
+
+  <div class="glass card-in" style="margin-top:12px">
+    <h4>📊 ورودی‌های اطلاعاتی اشتراک</h4>
+    <p style="font-size:.78rem;color:var(--mut);margin-bottom:10px">ردیف‌های نمایشی (غیرقابل‌اتصال). از <code>{usage}</code> و <code>{expiry}</code> استفاده کن.</p>
+    <div id="infoList"></div>
+    <button class="btn btn-g" style="margin-top:8px" type="button" onclick="addInfoRow()">+ افزودن ورودی</button>
+  </div>
+
+  <button class="btn btn-a" style="margin-top:14px;width:100%" onclick="saveAdv()">ذخیره تنظیمات پیشرفته</button>
 </div>
 
 <div class="sec" id="sec-tg">
@@ -871,7 +940,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <h4 style="margin-bottom:12px">راهنما و سوالات</h4>
     <p><b>پنل کجاست؟</b><br>مسیر <code>/8080/dash</code></p>
     <p><b>سابسکریپشن؟</b><br><code>/8080?sub=USERNAME</code></p>
-    <p><b>Clean IP</b><br>با پر کردن IP تمیز، کانفیگ پیش‌فرض هاست حذف و فقط IPها ساخته می‌شوند. کانفیگ نمایش حجم همیشه (اگر فعال باشد) اول لیست می‌آید.</p>
+    <p><b>Clean IP</b><br>هر خط IP یا IP#نام. نام در {IP_NAME} می‌آید. با پر شدن لیست، کانفیگ Core حذف می‌شود. ورودی‌های اطلاعاتی با {usage}/{expiry} قابل تنظیم‌اند.</p>
     <p><b>کانفیگ نمایش حجم</b><br>یک ردیف غیرقابل‌اتصال است که نامش حجم مصرفی و روز باقی‌مانده را نشان می‌دهد.</p>
     <p><b>آپ‌استریم</b><br>لینک‌های vless/trojan اضافی را خط‌به‌خط بچسبان تا به ساب اضافه شوند.</p>
     <p><b>ربات تلگرام</b><br>توکن ربات + Chat ID ادمین را بگذار، Webhook را فعال کن، پلن بساز. کاربر خرید می‌کند و تو تایید می‌کنی.</p>
@@ -937,11 +1006,45 @@ async function toggle(id,v){await api('/users/'+id,{method:'PATCH',body:JSON.str
 async function resetT(id){await api('/users/'+id,{method:'PATCH',body:JSON.stringify({reset_traffic:true})});loadUsers()}
 async function del(id){if(!confirm('حذف؟'))return;await api('/users/'+id,{method:'DELETE'});loadUsers()}
 function copy(t){navigator.clipboard.writeText(t).then(()=>alert('کپی شد')).catch(()=>prompt('کپی',t))}
+const NAME_VARS=['FLAG','COUNTRY','CITY','ISP','PROTOCOL','USER','PORT','PREFIX','IP','IP_NAME','HOST'];
+function renderChips(){
+  const box=document.getElementById('varChips');if(!box)return;
+  box.innerHTML=NAME_VARS.map(v=>`<button type="button" class="btn btn-g" style="padding:5px 10px;font-size:.72rem;font-family:monospace" onclick="insertVar('{${v}}')">{${v}}</button>`).join('');
+}
+function insertVar(v){
+  const el=document.getElementById('nameTpl');
+  const start=el.selectionStart||el.value.length,end=el.selectionEnd||start;
+  el.value=el.value.slice(0,start)+v+el.value.slice(end);
+  el.focus();el.setSelectionRange(start+v.length,start+v.length);
+}
+function renderInfoRows(list){
+  const box=document.getElementById('infoList');if(!box)return;
+  if(!list.length)list=['📊 {usage}','⏳ {expiry}'];
+  box.innerHTML=list.map((t,i)=>`<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+    <input data-info="${i}" value="${String(t).replace(/"/g,'&quot;')}" dir="ltr" style="text-align:left;flex:1">
+    <button type="button" class="btn btn-d" style="padding:6px 10px" onclick="this.parentElement.remove()">×</button>
+  </div>`).join('');
+}
+function addInfoRow(){
+  const box=document.getElementById('infoList');
+  const i=box.children.length;
+  const div=document.createElement('div');
+  div.style.cssText='display:flex;gap:8px;margin-bottom:8px;align-items:center';
+  div.innerHTML=`<input data-info="${i}" value="" dir="ltr" style="text-align:left;flex:1" placeholder="{usage} / {expiry}">
+    <button type="button" class="btn btn-d" style="padding:6px 10px" onclick="this.parentElement.remove()">×</button>`;
+  box.appendChild(div);
+}
+function collectInfo(){
+  return [...document.querySelectorAll('#infoList input')].map(i=>i.value.trim()).filter(Boolean);
+}
 async function loadSettings(){
   const s=await api('/settings');if(!s)return;
   cleanIps.value=s.clean_ips||'';upstream.value=s.upstream||'';
   protocol.value=s.protocol||'vless';ports.value=s.ports||'443,80';
-  subPrefix.value=s.sub_prefix||'Leviko';infoCfg.checked=s.info_cfg!==false;
+  subPrefix.value=s.sub_prefix||'Leviko';
+  if(document.getElementById('nameTpl'))nameTpl.value=s.name_template||'{PREFIX} · {USER} · {IP_NAME}';
+  renderChips();
+  renderInfoRows(Array.isArray(s.info_entries)?s.info_entries:[]);
   panelTitle.value=s.title||s.panel_title||'Leviko';killSwitch.checked=!!s.kill;
   setUser.value=s.admin_user||'';title.textContent=panelTitle.value;
   tgToken.value=s.tg_token||'';tgAdmin.value=s.tg_admin||'';
@@ -950,7 +1053,10 @@ async function loadSettings(){
 async function saveAdv(){
   await api('/settings',{method:'POST',body:JSON.stringify({
     clean_ips:cleanIps.value,upstream:upstream.value,protocol:protocol.value,
-    ports:ports.value,sub_prefix:subPrefix.value,info_cfg:infoCfg.checked
+    ports:ports.value,sub_prefix:subPrefix.value,
+    name_template:nameTpl.value,
+    info_entries:collectInfo(),
+    info_cfg:collectInfo().length>0
   })});alert('ذخیره شد');
 }
 async function saveSys(){
