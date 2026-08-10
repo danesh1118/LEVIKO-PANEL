@@ -63,6 +63,14 @@ const Store = {
         status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, username TEXT DEFAULT ''
       )`),
     ]);
+    // migrate older DBs missing columns
+    for (const sql of [
+      "ALTER TABLE users ADD COLUMN tg_id TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE users ADD COLUMN last_active INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE users ADD COLUMN remark TEXT NOT NULL DEFAULT ''",
+    ]) {
+      try { await db.prepare(sql).run(); } catch (_) {}
+    }
   },
   async get(db, k, fb = null) {
     const r = await db.prepare("SELECT value FROM settings WHERE key=?").bind(k).first();
@@ -110,6 +118,7 @@ async function cfg(db) {
     clean_ips: (await Store.get(db, "clean_ips", "")) || "",
     upstream: (await Store.get(db, "upstream", "")) || "",
     sub_prefix: (await Store.get(db, "sub_prefix", "Leviko")) || "Leviko",
+    fingerprint: (await Store.get(db, "fingerprint", "chrome")) || "chrome",
     name_template: (await Store.get(db, "name_template", "{PREFIX} · {USER} · {IP_NAME}")) || "{PREFIX} · {USER} · {IP_NAME}",
     info_entries,
     info_cfg: legacyInfo,
@@ -301,11 +310,11 @@ function buildUserLinks(host, user, c) {
     const name = encodeURIComponent(applyTemplate(tpl, vars).replace(/\s·\s$/g, "").replace(/^\s·\s/g, "").trim() || prefix);
     if (protocol === "trojan") {
       const sec = tls ? "tls" : "none";
-      const sni = tls ? `&sni=${host}&fp=chrome` : "";
+      const sni = tls ? `&sni=${host}&fp=${c.fingerprint || "chrome"}` : "";
       return `trojan://${user.uuid}@${addr}:${port}?security=${sec}${sni}&type=ws&host=${host}&path=${path}#${name}`;
     }
     const sec = tls ? "tls" : "none";
-    const sni = tls ? `&sni=${host}&fp=chrome` : "";
+    const sni = tls ? `&sni=${host}&fp=${c.fingerprint || "chrome"}` : "";
     return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=${sec}${sni}&type=ws&host=${host}&path=${path}#${name}`;
   };
 
@@ -573,21 +582,52 @@ async function handleApi(request, url, env) {
   if (path === "/stats" && method === "GET") {
     const total = await env.DB.prepare("SELECT COUNT(*) as c FROM users").first();
     const active = await env.DB.prepare("SELECT COUNT(*) as c FROM users WHERE is_active=1").first();
+    const inactive = await env.DB.prepare("SELECT COUNT(*) as c FROM users WHERE is_active=0").first();
+    const now = Date.now();
+    const allU = await env.DB.prepare("SELECT is_active, expiry_days, created_at, used_gb, limit_gb FROM users").all();
+    let expired = 0;
+    for (const u of (allU.results || [])) {
+      if (u.expiry_days > 0 && now > u.created_at + u.expiry_days * 86400000) expired++;
+    }
     const traffic = await env.DB.prepare("SELECT COALESCE(SUM(used_gb),0) as s FROM users").first();
     const pending = await env.DB.prepare("SELECT COUNT(*) as c FROM orders WHERE status='pending'").first();
     const c = await cfg(env.DB);
+    // CF free tier daily request estimate is not exposed via Workers runtime; show placeholder from setting
+    const cfUsed = parseInt(await Store.get(env.DB, "cf_req_used", "0") || "0", 10) || 0;
+    const cfLimit = parseInt(await Store.get(env.DB, "cf_req_limit", "100000") || "100000", 10) || 100000;
     return json({
-      users: total?.c || 0, active: active?.c || 0,
+      users: total?.c || 0,
+      active: active?.c || 0,
+      inactive: inactive?.c || 0,
+      expired,
       traffic: +(Number(traffic?.s) || 0).toFixed(3),
-      pending: pending?.c || 0, kill: c.kill, version: V, protocol: c.protocol,
+      pending: pending?.c || 0,
+      cf_used: cfUsed,
+      cf_limit: cfLimit,
+      cf_left: Math.max(0, cfLimit - cfUsed),
+      kill: c.kill, version: V, protocol: c.protocol,
     });
   }
 
   if (path === "/users" && method === "GET") {
-    const { results } = await env.DB.prepare(
-      "SELECT id,username,uuid,limit_gb,used_gb,expiry_days,created_at,is_active,remark,last_active,tg_id FROM users ORDER BY id DESC"
-    ).all();
-    return json({ users: results || [] });
+    try {
+      const { results } = await env.DB.prepare(
+        "SELECT id,username,uuid,limit_gb,used_gb,expiry_days,created_at,is_active,remark,last_active,tg_id FROM users ORDER BY id DESC"
+      ).all();
+      return json({ users: results || [] });
+    } catch (e) {
+      try {
+        const { results } = await env.DB.prepare(
+          "SELECT id,username,uuid,limit_gb,used_gb,expiry_days,created_at,is_active,remark,last_active FROM users ORDER BY id DESC"
+        ).all();
+        return json({ users: (results || []).map(u => ({ ...u, tg_id: '' })) });
+      } catch (e2) {
+        const { results } = await env.DB.prepare(
+          "SELECT id,username,uuid,limit_gb,used_gb,expiry_days,created_at,is_active FROM users ORDER BY id DESC"
+        ).all();
+        return json({ users: (results || []).map(u => ({ ...u, remark: '', last_active: 0, tg_id: '' })) });
+      }
+    }
   }
   if (path === "/users" && method === "POST") {
     const body = await request.json().catch(() => ({}));
@@ -638,7 +678,7 @@ async function handleApi(request, url, env) {
     const body = await request.json().catch(() => ({}));
     const map = {
       protocol: "protocol", ports: "ports", clean_ips: "clean_ips", upstream: "upstream",
-      sub_prefix: "sub_prefix", panel_title: "panel_title", name_template: "name_template",
+      sub_prefix: "sub_prefix", panel_title: "panel_title", name_template: "name_template", fingerprint: "fingerprint",
       tg_token: "tg_token", tg_admin: "tg_admin", tg_welcome: "tg_welcome", pay_card: "pay_card",
     };
     for (const [k, sk] of Object.entries(map)) {
@@ -791,11 +831,25 @@ function panelPage() {
 display:grid;place-items:center;font-weight:900;color:#fff;box-shadow:0 10px 28px rgba(139,92,246,.4);
 transform:perspective(320px) rotateY(-12deg) rotateX(6deg)}
 .brand h1{font-size:1.2rem;font-weight:800}.brand span{font-size:.7rem;color:var(--mut);letter-spacing:.08em}
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
-.stat{padding:16px 12px;text-align:center;position:relative;overflow:hidden}
-.stat::after{content:'';position:absolute;inset:auto -20% -40% auto;width:80px;height:80px;border-radius:50%;background:rgba(139,92,246,.12);filter:blur(20px)}
-.stat .n{font-size:1.45rem;font-weight:800;background:linear-gradient(135deg,#c4b5fd,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.stat .l{font-size:.72rem;color:var(--mut);margin-top:3px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+.stat{padding:16px 12px;text-align:center;position:relative;overflow:hidden;border-radius:16px}
+.stat .n{font-size:1.45rem;font-weight:800}
+.stat .l{font-size:.72rem;margin-top:3px;opacity:.85}
+.stat-blue{border-color:rgba(96,165,250,.35)!important;background:linear-gradient(160deg,rgba(59,130,246,.14),rgba(255,255,255,.02))}
+.stat-blue .n{color:#60a5fa}.stat-blue .l{color:#93c5fd}
+.stat-green{border-color:rgba(52,211,153,.35)!important;background:linear-gradient(160deg,rgba(16,185,129,.14),rgba(255,255,255,.02))}
+.stat-green .n{color:#34d399}.stat-green .l{color:#6ee7b7}
+.stat-red{border-color:rgba(248,113,113,.35)!important;background:linear-gradient(160deg,rgba(239,68,68,.14),rgba(255,255,255,.02))}
+.stat-red .n{color:#f87171}.stat-red .l{color:#fca5a5}
+.stat-gray{border-color:rgba(148,163,184,.3)!important;background:linear-gradient(160deg,rgba(100,116,139,.14),rgba(255,255,255,.02))}
+.stat-gray .n{color:#94a3b8}.stat-gray .l{color:#cbd5e1}
+.stat-orange{border-color:rgba(251,146,60,.35)!important;background:linear-gradient(160deg,rgba(249,115,22,.14),rgba(255,255,255,.02))}
+.stat-orange .n{color:#fb923c}.stat-orange .l{color:#fdba74}
+.ip-row{display:flex;gap:8px;margin-bottom:8px;align-items:center}
+.ip-row input{flex:1}
+.ip-list{margin-top:10px}
+.ip-item{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;margin-bottom:6px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--line);font-size:.84rem}
+.ip-item code{color:var(--p2)}
 .toolbar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
 table{width:100%;border-collapse:collapse;font-size:.84rem}
 th{text-align:right;padding:10px;color:var(--mut);font-weight:600;border-bottom:1px solid var(--line);font-size:.72rem}
@@ -814,7 +868,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .card-in{padding:16px}.card-in h4{font-size:.92rem;font-weight:800;margin-bottom:10px;color:var(--p2)}
 .help q,.help p{color:var(--mut);font-size:.88rem;margin-bottom:10px}.help b{color:var(--txt)}
-@media(max-width:720px){.stats{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}}
+@media(max-width:720px){.stats{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}.ip-row{flex-direction:column}}
 </style></head><body><div class="scene">
 <div class="top">
   <div class="brand"><div class="mark">L</div><div><h1 id="title">Leviko</h1><span>PANEL · v${V}</span></div></div>
@@ -831,10 +885,12 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
 <div class="sec on" id="sec-users">
   <div class="stats">
-    <div class="glass stat"><div class="n" id="sUsers">—</div><div class="l">کاربران</div></div>
-    <div class="glass stat"><div class="n" id="sActive">—</div><div class="l">فعال</div></div>
-    <div class="glass stat"><div class="n" id="sTraffic">—</div><div class="l">مصرف GB</div></div>
-    <div class="glass stat"><div class="n" id="sPending">—</div><div class="l">سفارش باز</div></div>
+    <div class="glass stat stat-blue"><div class="n" id="sUsers">—</div><div class="l">کل کاربران</div></div>
+    <div class="glass stat stat-green"><div class="n" id="sActive">—</div><div class="l">فعال</div></div>
+    <div class="glass stat stat-red"><div class="n" id="sInactive">—</div><div class="l">غیرفعال</div></div>
+    <div class="glass stat stat-gray"><div class="n" id="sExpired">—</div><div class="l">منقضی</div></div>
+    <div class="glass stat stat-orange"><div class="n" id="sTraffic">—</div><div class="l">مصرف حجم GB</div></div>
+    <div class="glass stat stat-orange"><div class="n" id="sCf">—</div><div class="l">درخواست CF (باقی)</div></div>
   </div>
   <div class="toolbar">
     <button class="btn btn-a" onclick="openCreate()">+ کاربر</button>
@@ -851,10 +907,18 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <div class="sec" id="sec-adv">
   <div class="grid2">
     <div class="glass card-in">
-      <h4>🌐 شبکه و DNS — IP تمیز</h4>
-      <div class="field"><label>هر خط: IP یا IP#نام</label>
-        <textarea id="cleanIps" rows="7" placeholder="1.2.3.4#Tehran&#10;5.6.7.8#Germany&#10;cf.example.com"></textarea></div>
-      <p style="font-size:.75rem;color:var(--faint)">فرمت <code>IP#نام</code> → نام در <code>{IP_NAME}</code> می‌آید. با پر شدن این لیست، کانفیگ پیش‌فرض Core حذف می‌شود.</p>
+      <h4>🌐 شبکه و DNS — آی‌پی‌های تمیز</h4>
+      <div class="ip-row">
+        <input id="cipIp" dir="ltr" style="text-align:left" placeholder="1.2.3.4">
+        <input id="cipName" dir="ltr" style="text-align:left" placeholder="Name (Optional)">
+        <button type="button" class="btn btn-a" style="width:auto;padding:10px 14px" onclick="addCleanIp()">+</button>
+      </div>
+      <div class="field"><label>لیست (هر خط یا با کاما)</label>
+        <textarea id="cleanIps" rows="4" placeholder="1.2.3.4#Tehran" dir="ltr" style="text-align:left"></textarea></div>
+      <div class="ip-list" id="cipPreview"></div>
+      <p style="font-size:.75rem;color:var(--faint);margin-top:8px">آی‌پی را با کاما یا خط جدید جدا کنید. لینک ساب برای همه ترکیب می‌سازد. با پر شدن لیست، کانفیگ Core حذف می‌شود.</p>
+      <div class="field" style="margin-top:12px"><label>امضای امنیتی (Fingerprint)</label>
+        <select id="fpSel"><option>chrome</option><option>firefox</option><option>safari</option><option>ios</option><option>android</option><option>edge</option><option>random</option></select></div>
     </div>
     <div class="glass card-in">
       <h4>🔗 آپ‌استریم</h4>
@@ -994,12 +1058,21 @@ async function logout() {
 
 async function loadUsers() {
   const s = await api('/stats');
-  if (!s) return;
+  if (s) {
   if ($('sUsers')) $('sUsers').textContent = s.users ?? '—';
   if ($('sActive')) $('sActive').textContent = s.active ?? '—';
+  if ($('sInactive')) $('sInactive').textContent = s.inactive ?? '—';
+  if ($('sExpired')) $('sExpired').textContent = s.expired ?? '—';
   if ($('sTraffic')) $('sTraffic').textContent = s.traffic ?? '—';
-  if ($('sPending')) $('sPending').textContent = s.pending ?? 0;
+  if ($('sCf')) {
+    var left = s.cf_left != null ? s.cf_left : '—';
+    var used = s.cf_used != null ? s.cf_used : 0;
+    var lim = s.cf_limit != null ? s.cf_limit : 100000;
+    $('sCf').textContent = used + ' / ' + lim;
+    $('sCf').parentElement.querySelector('.l').textContent = 'درخواست CF · باقی ' + left;
+  }
   if ($('killBanner')) $('killBanner').classList.toggle('on', !!s.kill);
+  }
 
   const u = await api('/users');
   const tb = $('tbody');
@@ -1008,17 +1081,26 @@ async function loadUsers() {
     tb.innerHTML = '<tr><td colspan="5" class="empty">کاربری نیست</td></tr>';
     return;
   }
-  tb.innerHTML = u.users.map(function (x) {
-    var used = (x.used_gb || 0).toFixed(2);
-    var lim = x.limit_gb > 0 ? x.limit_gb : '∞';
+  var list = Array.isArray(u.users) ? u.users : [];
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty">کاربری نیست</td></tr>';
+    return;
+  }
+  tb.innerHTML = list.map(function (x) {
+    var used = (Number(x.used_gb) || 0).toFixed(2);
+    var lim = Number(x.limit_gb) > 0 ? x.limit_gb : '∞';
     var days = '∞';
-    if (x.expiry_days > 0) {
-      var left = Math.ceil((x.created_at + x.expiry_days * 86400000 - Date.now()) / 86400000);
+    var isExp = false;
+    if (Number(x.expiry_days) > 0) {
+      var left = Math.ceil((Number(x.created_at) + Number(x.expiry_days) * 86400000 - Date.now()) / 86400000);
       days = left > 0 ? left : 0;
+      isExp = left <= 0;
     }
-    var st = x.is_active
-      ? '<span class="badge badge-on">فعال</span>'
-      : '<span class="badge badge-off">قطع</span>';
+    var st = isExp
+      ? '<span class="badge" style="background:rgba(148,163,184,.15);color:#94a3b8">منقضی</span>'
+      : (Number(x.is_active) === 1
+        ? '<span class="badge badge-on">فعال</span>'
+        : '<span class="badge badge-off">غیرفعال</span>');
     var sub = root + '${ROOT}?sub=' + encodeURIComponent(x.username);
     return '<tr><td><strong>' + x.username + '</strong><br><span style="font-size:.68rem;color:var(--faint)">' +
       String(x.uuid).slice(0, 8) + '…</span></td><td>' + st + '</td><td>' + used + '/' + lim +
@@ -1138,10 +1220,37 @@ function collectInfo() {
   }).filter(Boolean);
 }
 
+function addCleanIp() {
+  var ip = ($('cipIp') && $('cipIp').value || '').trim();
+  var name = ($('cipName') && $('cipName').value || '').trim();
+  if (!ip) { alert('IP را وارد کن'); return; }
+  var line = name ? (ip + '#' + name) : ip;
+  var ta = $('cleanIps');
+  if (!ta) return;
+  var cur = ta.value.trim();
+  ta.value = cur ? (cur + '\n' + line) : line;
+  $('cipIp').value = '';
+  $('cipName').value = '';
+  previewCleanIps();
+}
+
+function previewCleanIps() {
+  var box = $('cipPreview');
+  var ta = $('cleanIps');
+  if (!box || !ta) return;
+  var lines = ta.value.split(/[\n,]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+  box.innerHTML = lines.length
+    ? ('<span class="badge badge-on" style="margin-bottom:8px;display:inline-block">' + lines.length + ' کانفیگ</span>')
+    : '';
+}
+
 async function loadSettings() {
   var s = await api('/settings');
   if (!s) return;
   if ($('cleanIps')) $('cleanIps').value = s.clean_ips || '';
+  if ($('fpSel') && s.fingerprint) $('fpSel').value = s.fingerprint;
+  previewCleanIps();
+  if ($('cleanIps')) $('cleanIps').oninput = previewCleanIps;
   if ($('upstream')) $('upstream').value = s.upstream || '';
   if ($('protocol')) $('protocol').value = s.protocol || 'vless';
   if ($('ports')) $('ports').value = s.ports || '443,80';
@@ -1169,6 +1278,7 @@ async function saveAdv() {
       ports: $('ports') ? $('ports').value : '443,80',
       sub_prefix: $('subPrefix') ? $('subPrefix').value : 'Leviko',
       name_template: $('nameTpl') ? $('nameTpl').value : '',
+      fingerprint: $('fpSel') ? $('fpSel').value : 'chrome',
       info_entries: collectInfo(),
       info_cfg: collectInfo().length > 0
     })
