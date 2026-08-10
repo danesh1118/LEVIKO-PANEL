@@ -113,7 +113,20 @@ const Store = {
       )`),
       db.prepare(`CREATE TABLE IF NOT EXISTS orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT, tg_id TEXT NOT NULL, plan_id INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, username TEXT DEFAULT ''
+        status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, username TEXT DEFAULT '',
+        amount INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT 'plan', note TEXT NOT NULL DEFAULT ''
+      )`),
+      db.prepare(`CREATE TABLE IF NOT EXISTS tg_customers (
+        tg_id TEXT PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0,
+        referrer TEXT NOT NULL DEFAULT '', trial_used INTEGER NOT NULL DEFAULT 0,
+        state TEXT NOT NULL DEFAULT '', state_data TEXT NOT NULL DEFAULT '',
+        discount TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL DEFAULT 0,
+        name TEXT NOT NULL DEFAULT ''
+      )`),
+      db.prepare(`CREATE TABLE IF NOT EXISTS discounts (
+        code TEXT PRIMARY KEY, percent INTEGER NOT NULL DEFAULT 10,
+        max_uses INTEGER NOT NULL DEFAULT 0, used_count INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1
       )`),
     ]);
     // migrate older DBs missing columns
@@ -121,6 +134,9 @@ const Store = {
       "ALTER TABLE users ADD COLUMN tg_id TEXT NOT NULL DEFAULT ''",
       "ALTER TABLE users ADD COLUMN last_active INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE users ADD COLUMN remark TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE orders ADD COLUMN amount INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE orders ADD COLUMN kind TEXT NOT NULL DEFAULT 'plan'",
+      "ALTER TABLE orders ADD COLUMN note TEXT NOT NULL DEFAULT ''",
     ]) {
       try { await db.prepare(sql).run(); } catch (_) {}
     }
@@ -179,8 +195,13 @@ async function cfg(db) {
     title: (await Store.get(db, "panel_title", "Leviko")) || "Leviko",
     tg_token: (await Store.get(db, "tg_token", "")) || "",
     tg_admin: (await Store.get(db, "tg_admin", "")) || "",
-    tg_welcome: (await Store.get(db, "tg_welcome", "به ربات فروش Leviko خوش آمدید")) || "",
+    tg_welcome: (await Store.get(db, "tg_welcome", "به ربات فروش Leviko خوش آمدید 👋")) || "",
     card: (await Store.get(db, "pay_card", "")) || "",
+    tg_channel: (await Store.get(db, "tg_channel", "")) || "",
+    tg_support: (await Store.get(db, "tg_support", "")) || "",
+    trial_gb: parseFloat(await Store.get(db, "trial_gb", "1") || "1") || 1,
+    trial_days: parseInt(await Store.get(db, "trial_days", "1") || "1", 10) || 1,
+    referral_bonus: parseInt(await Store.get(db, "referral_bonus", "5000") || "5000", 10) || 5000,
   };
 }
 
@@ -549,183 +570,702 @@ async function handleSub(url, env, request) {
   });
 }
 
-/* ─── Telegram bot ─── */
+/* ─── Telegram bot (Mirza-style) ─── */
 async function tgApi(token, method, body) {
   const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(body || {}),
   });
   return r.json().catch(() => ({}));
 }
 
+async function ensureCustomer(db, tgId, name = "", referrer = "") {
+  let c = await db.prepare("SELECT * FROM tg_customers WHERE tg_id=?").bind(tgId).first();
+  if (!c) {
+    await db.prepare(
+      "INSERT INTO tg_customers (tg_id,balance,referrer,trial_used,state,state_data,discount,created_at,name) VALUES (?,?,?,0,'','','',?,?)"
+    ).bind(tgId, 0, referrer || "", Date.now(), name || "").run();
+    c = await db.prepare("SELECT * FROM tg_customers WHERE tg_id=?").bind(tgId).first();
+  }
+  return c;
+}
+
+async function setState(db, tgId, state, data = "") {
+  await db.prepare("UPDATE tg_customers SET state=?, state_data=? WHERE tg_id=?")
+    .bind(state || "", typeof data === "string" ? data : JSON.stringify(data), tgId).run();
+}
+
+async function getCustomer(db, tgId) {
+  return db.prepare("SELECT * FROM tg_customers WHERE tg_id=?").bind(tgId).first();
+}
+
+function mainKeyboard(isAdmin) {
+  const rows = [
+    [{ text: "🛒 خرید اشتراک", callback_data: "shop" }, { text: "🎁 اکانت تست", callback_data: "trial" }],
+    [{ text: "📱 سرویس‌های من", callback_data: "mysub" }, { text: "💰 کیف پول", callback_data: "wallet" }],
+    [{ text: "👥 دعوت دوستان", callback_data: "ref" }, { text: "🎫 کد تخفیف", callback_data: "discount" }],
+    [{ text: "🆘 پشتیبانی", callback_data: "support" }, { text: "ℹ️ راهنما", callback_data: "help" }],
+  ];
+  if (isAdmin) rows.push([{ text: "🛠 پنل مدیریت", callback_data: "admin" }]);
+  return { inline_keyboard: rows };
+}
+
+function backHome() {
+  return { inline_keyboard: [[{ text: "🏠 منوی اصلی", callback_data: "home" }]] };
+}
+
+async function checkChannel(token, channel, userId) {
+  if (!channel) return true;
+  const ch = channel.startsWith("@") ? channel : "@" + channel.replace(/^https?:\/\/t\.me\//, "");
+  try {
+    const r = await tgApi(token, "getChatMember", { chat_id: ch, user_id: Number(userId) });
+    const st = r?.result?.status || "";
+    return ["creator", "administrator", "member", "restricted"].includes(st);
+  } catch (_) {
+    return true;
+  }
+}
+
+async function deliverService(env, c, host, tgId, plan, orderId) {
+  const uname = ("u" + tgId.slice(-6) + "o" + orderId).replace(/[^a-zA-Z0-9_]/g, "").slice(0, 24);
+  const id = uuid();
+  await env.DB.prepare(
+    `INSERT INTO users (username,uuid,limit_gb,used_gb,expiry_days,created_at,is_active,remark,tg_id)
+     VALUES (?,?,?,0,?,?,1,?,?)`
+  ).bind(uname, id, plan.gb || 10, plan.days || 30, Date.now(), "order-" + orderId, tgId).run();
+  if (orderId) await env.DB.prepare("UPDATE orders SET status='done', username=? WHERE id=?").bind(uname, orderId).run();
+  const sub = `https://${host}${ROOT}?sub=${encodeURIComponent(uname)}`;
+  const status = `https://${host}${ROOT}?u=${encodeURIComponent(uname)}`;
+  await tgApi(c.tg_token, "sendMessage", {
+    chat_id: tgId,
+    parse_mode: "HTML",
+    text:
+      `✅ <b>سرویس شما آماده است!</b>\n\n` +
+      `👤 یوزرنیم: <code>${uname}</code>\n` +
+      `📦 پلن: ${plan.title || "—"}\n` +
+      `📊 حجم: ${plan.gb || 0} GB\n` +
+      `⏳ مدت: ${plan.days || 0} روز\n\n` +
+      `🔗 لینک اشتراک:\n<code>${sub}</code>\n\n` +
+      `🌐 صفحه وضعیت:\n<code>${status}</code>\n\n` +
+      `این لینک را در v2rayNG / Hiddify / Streisand وارد کنید.`,
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "📱 سرویس‌های من", callback_data: "mysub" }],
+        [{ text: "🏠 منو", callback_data: "home" }],
+      ],
+    },
+  });
+  return uname;
+}
+
 async function handleTelegram(request, env) {
   const c = await cfg(env.DB);
-  if (!c.tg_token) return json({ ok: false });
+  if (!c.tg_token) return json({ ok: false, error: "no token" });
   const update = await request.json().catch(() => null);
   if (!update) return json({ ok: true });
 
   const msg = update.message || update.callback_query?.message;
-  const chatId = String(update.message?.chat?.id || update.callback_query?.from?.id || "");
+  const from = update.message?.from || update.callback_query?.from;
+  const chatId = String(from?.id || update.message?.chat?.id || "");
   const text = (update.message?.text || "").trim();
   const data = update.callback_query?.data || "";
-  const isAdmin = c.tg_admin && chatId === String(c.tg_admin);
+  const isAdmin = !!(c.tg_admin && chatId === String(c.tg_admin));
+  const host = new URL(request.url).hostname;
+  const botUsername = (await Store.get(env.DB, "tg_bot_username", "")) || "";
 
-  const send = (txt, extra = {}) => tgApi(c.tg_token, "sendMessage", { chat_id: chatId, text: txt, parse_mode: "HTML", ...extra });
+  const send = (txt, extra = {}) =>
+    tgApi(c.tg_token, "sendMessage", { chat_id: chatId, text: txt, parse_mode: "HTML", disable_web_page_preview: true, ...extra });
   const edit = (txt, extra = {}) =>
-    tgApi(c.tg_token, "editMessageText", { chat_id: chatId, message_id: msg?.message_id, text: txt, parse_mode: "HTML", ...extra });
-
-  const mainKb = {
-    inline_keyboard: [
-      [{ text: "🛒 خرید اشتراک", callback_data: "shop" }],
-      [{ text: "📱 سرویس‌های من", callback_data: "mysub" }],
-      [{ text: "💳 کارت به کارت", callback_data: "card" }, { text: "ℹ️ راهنما", callback_data: "help" }],
-    ],
-  };
-  if (isAdmin) mainKb.inline_keyboard.push([{ text: "🛠 پنل ادمین", callback_data: "admin" }]);
+    tgApi(c.tg_token, "editMessageText", {
+      chat_id: chatId,
+      message_id: msg?.message_id,
+      text: txt,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      ...extra,
+    });
 
   if (update.callback_query) {
     await tgApi(c.tg_token, "answerCallbackQuery", { callback_query_id: update.callback_query.id });
   }
 
-  // /start
-  if (text.startsWith("/start") || data === "home") {
-    await send(`${c.tg_welcome}\n\nاز منو یک گزینه انتخاب کن:`, { reply_markup: mainKb });
-    return json({ ok: true });
+  // ensure customer + referral from /start CODE
+  let refFromStart = "";
+  if (text.startsWith("/start")) {
+    const parts = text.split(/\s+/);
+    if (parts[1] && /^\d+$/.test(parts[1]) && parts[1] !== chatId) refFromStart = parts[1];
   }
+  const cust = await ensureCustomer(
+    env.DB,
+    chatId,
+    [from?.first_name, from?.last_name].filter(Boolean).join(" "),
+    refFromStart
+  );
 
-  if (data === "help" || text === "/help") {
-    await send(
-      `<b>راهنما</b>\n\n` +
-        `• خرید اشتراک: پلن را انتخاب و پرداخت را انجام بده\n` +
-        `• سرویس‌های من: لینک ساب و وضعیت حجم/زمان\n` +
-        `• پشتیبانی: به ادمین پیام بده\n\n` +
-        `پنل وب فقط برای مدیر است.`,
-      { reply_markup: { inline_keyboard: [[{ text: "🏠 منو", callback_data: "home" }]] } }
-    );
-    return json({ ok: true });
-  }
-
-  if (data === "card") {
-    await send(c.card ? `<b>کارت:</b>\n<code>${c.card}</code>\n\nبعد از واریز، رسید را برای ادمین بفرست.` : "کارت هنوز تنظیم نشده.", {
-      reply_markup: { inline_keyboard: [[{ text: "🏠 منو", callback_data: "home" }]] },
-    });
-    return json({ ok: true });
-  }
-
-  if (data === "shop") {
-    const { results: plans } = await env.DB.prepare("SELECT * FROM plans WHERE is_active=1 ORDER BY id").all();
-    if (!plans?.length) {
-      await send("پلنی فعال نیست.", { reply_markup: { inline_keyboard: [[{ text: "🏠 منو", callback_data: "home" }]] } });
+  // force channel join
+  if (c.tg_channel && !isAdmin && (data === "shop" || data === "trial" || data.startsWith("buy_") || data === "wallet")) {
+    const ok = await checkChannel(c.tg_token, c.tg_channel, chatId);
+    if (!ok) {
+      const ch = c.tg_channel.startsWith("@") ? c.tg_channel : "@" + c.tg_channel.replace(/^https?:\/\/t\.me\//, "");
+      const link = ch.startsWith("@") ? `https://t.me/${ch.slice(1)}` : c.tg_channel;
+      await send(
+        `🔒 برای استفاده از ربات ابتدا در کانال عضو شوید:\n${link}`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📢 عضویت در کانال", url: link }],
+              [{ text: "✅ عضو شدم", callback_data: "home" }],
+            ],
+          },
+        }
+      );
       return json({ ok: true });
     }
-    const rows = plans.map((p) => [{ text: `${p.title} — ${p.price.toLocaleString("fa-IR")} ت · ${p.gb}GB · ${p.days}روز`, callback_data: "buy_" + p.id }]);
+  }
+
+  // ── states (text input) ──
+  if (text && !text.startsWith("/") && cust?.state) {
+    const st = cust.state;
+    if (st === "wait_discount") {
+      const code = text.toUpperCase().replace(/\s/g, "");
+      const d = await env.DB.prepare("SELECT * FROM discounts WHERE code=? AND is_active=1").bind(code).first();
+      if (!d) {
+        await send("❌ کد تخفیف معتبر نیست.", { reply_markup: backHome() });
+      } else if (d.max_uses > 0 && d.used_count >= d.max_uses) {
+        await send("❌ ظرفیت این کد تمام شده.", { reply_markup: backHome() });
+      } else {
+        await env.DB.prepare("UPDATE tg_customers SET discount=? WHERE tg_id=?").bind(code, chatId).run();
+        await send(`✅ کد <b>${code}</b> اعمال شد · ${d.percent}٪ تخفیف روی خرید بعدی`, { reply_markup: backHome() });
+      }
+      await setState(env.DB, chatId, "");
+      return json({ ok: true });
+    }
+    if (st === "wait_charge") {
+      const amount = parseInt(text.replace(/[^\d]/g, ""), 10);
+      if (!amount || amount < 10000) {
+        await send("مبلغ نامعتبر. حداقل ۱۰٬۰۰۰ تومان:", { reply_markup: backHome() });
+        return json({ ok: true });
+      }
+      await env.DB.prepare(
+        "INSERT INTO orders (tg_id, plan_id, status, created_at, amount, kind, note) VALUES (?,?,?,?,?,?,?)"
+      ).bind(chatId, 0, "pending", Date.now(), amount, "charge", "wallet").run();
+      const order = await env.DB.prepare("SELECT id FROM orders WHERE tg_id=? ORDER BY id DESC LIMIT 1").bind(chatId).first();
+      await setState(env.DB, chatId, "wait_receipt", String(order?.id || ""));
+      const card = c.card || "کارت هنوز تنظیم نشده — به پشتیبانی پیام دهید";
+      await send(
+        `💳 <b>افزایش موجودی</b>\nمبلغ: <b>${amount.toLocaleString("fa-IR")}</b> تومان\nسفارش: #${order?.id}\n\n` +
+          `به کارت زیر واریز کنید:\n<code>${card}</code>\n\nسپس <b>عکس رسید</b> را همین‌جا ارسال کنید.`,
+        { reply_markup: backHome() }
+      );
+      return json({ ok: true });
+    }
+    if (st === "wait_support") {
+      if (c.tg_admin) {
+        await tgApi(c.tg_token, "sendMessage", {
+          chat_id: c.tg_admin,
+          text: `💬 پشتیبانی از <code>${chatId}</code> (${cust.name || "-"})\n\n${text}`,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [[{ text: "پاسخ", callback_data: "reply_" + chatId }]],
+          },
+        });
+      }
+      await setState(env.DB, chatId, "");
+      await send("✅ پیام شما به پشتیبانی ارسال شد.", { reply_markup: backHome() });
+      return json({ ok: true });
+    }
+    if (st === "wait_broadcast" && isAdmin) {
+      const { results } = await env.DB.prepare("SELECT tg_id FROM tg_customers LIMIT 500").all();
+      let n = 0;
+      for (const u of results || []) {
+        try {
+          await tgApi(c.tg_token, "sendMessage", { chat_id: u.tg_id, text, parse_mode: "HTML" });
+          n++;
+        } catch (_) {}
+      }
+      await setState(env.DB, chatId, "");
+      await send(`✅ پیام برای ${n} کاربر ارسال شد.`);
+      return json({ ok: true });
+    }
+    if (st.startsWith("reply_") && isAdmin) {
+      const target = st.slice(6);
+      await tgApi(c.tg_token, "sendMessage", {
+        chat_id: target,
+        text: `📩 <b>پاسخ پشتیبانی:</b>\n\n${text}`,
+        parse_mode: "HTML",
+      });
+      await setState(env.DB, chatId, "");
+      await send("✅ پاسخ ارسال شد.");
+      return json({ ok: true });
+    }
+  }
+
+  // photo receipt
+  if (update.message?.photo && cust?.state === "wait_receipt") {
+    const orderId = cust.state_data;
+    const photos = update.message.photo;
+    const fileId = photos[photos.length - 1].file_id;
+    if (c.tg_admin) {
+      await tgApi(c.tg_token, "sendPhoto", {
+        chat_id: c.tg_admin,
+        photo: fileId,
+        caption: `🧾 رسید سفارش #${orderId}\nاز: <code>${chatId}</code> (${cust.name || "-"})`,
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "✅ تایید", callback_data: "approve_" + orderId },
+              { text: "❌ رد", callback_data: "reject_" + orderId },
+            ],
+          ],
+        },
+      });
+    }
+    await setState(env.DB, chatId, "");
+    await send("✅ رسید دریافت شد. پس از تایید ادمین، سرویس/موجودی فعال می‌شود.", { reply_markup: backHome() });
+    return json({ ok: true });
+  }
+
+  // ── /start & home ──
+  if (text === "/start" || text.startsWith("/start ") || data === "home") {
+    // referral bonus once
+    if (refFromStart && cust.referrer === refFromStart) {
+      const ref = await getCustomer(env.DB, refFromStart);
+      if (ref) {
+        const already = await Store.get(env.DB, "ref_paid_" + chatId, "");
+        if (!already) {
+          await env.DB.prepare("UPDATE tg_customers SET balance=balance+? WHERE tg_id=?")
+            .bind(c.referral_bonus, refFromStart).run();
+          await Store.set(env.DB, "ref_paid_" + chatId, "1");
+          await tgApi(c.tg_token, "sendMessage", {
+            chat_id: refFromStart,
+            text: `🎁 یک نفر با لینک شما عضو شد! +${c.referral_bonus.toLocaleString("fa-IR")} تومان به کیف پولتان اضافه شد.`,
+          });
+        }
+      }
+    }
+    const bal = (await getCustomer(env.DB, chatId))?.balance || 0;
+    const welcome =
+      `${c.tg_welcome}\n\n` +
+      `👤 شناسه: <code>${chatId}</code>\n` +
+      `💰 موجودی: <b>${Number(bal).toLocaleString("fa-IR")}</b> تومان\n\n` +
+      `از منوی زیر انتخاب کنید:`;
+    if (data === "home" && msg?.message_id) {
+      await edit(welcome, { reply_markup: mainKeyboard(isAdmin) });
+    } else {
+      await send(welcome, { reply_markup: mainKeyboard(isAdmin) });
+    }
+    await setState(env.DB, chatId, "");
+    return json({ ok: true });
+  }
+
+  // ── shop ──
+  if (data === "shop") {
+    const { results: plans } = await env.DB.prepare("SELECT * FROM plans WHERE is_active=1 ORDER BY price").all();
+    if (!plans?.length) {
+      await edit("فعلاً پلنی تعریف نشده. از پنل وب پلن بسازید.", { reply_markup: backHome() });
+      return json({ ok: true });
+    }
+    const rows = plans.map((p) => [
+      {
+        text: `${p.title} | ${Number(p.price).toLocaleString("fa-IR")}ت | ${p.gb}GB | ${p.days}روز`,
+        callback_data: "buy_" + p.id,
+      },
+    ]);
     rows.push([{ text: "🏠 منو", callback_data: "home" }]);
-    await send("یک پلن انتخاب کن:", { reply_markup: { inline_keyboard: rows } });
+    await edit("🛒 <b>فروشگاه</b>\nیک پلن انتخاب کنید:", { reply_markup: { inline_keyboard: rows } });
     return json({ ok: true });
   }
 
   if (data.startsWith("buy_")) {
     const pid = parseInt(data.slice(4), 10);
     const plan = await env.DB.prepare("SELECT * FROM plans WHERE id=? AND is_active=1").bind(pid).first();
-    if (!plan) { await send("پلن نامعتبر"); return json({ ok: true }); }
-    await env.DB.prepare("INSERT INTO orders (tg_id, plan_id, status, created_at) VALUES (?,?,?,?)")
-      .bind(chatId, pid, "pending", Date.now()).run();
+    if (!plan) {
+      await edit("پلن نامعتبر", { reply_markup: backHome() });
+      return json({ ok: true });
+    }
+    let price = Number(plan.price) || 0;
+    const cu = await getCustomer(env.DB, chatId);
+    let discNote = "";
+    if (cu?.discount) {
+      const d = await env.DB.prepare("SELECT * FROM discounts WHERE code=? AND is_active=1").bind(cu.discount).first();
+      if (d) {
+        price = Math.max(0, Math.floor(price * (1 - d.percent / 100)));
+        discNote = `\n🎫 تخفیف ${d.percent}٪ · کد ${d.code}`;
+      }
+    }
+    await edit(
+      `📦 <b>${plan.title}</b>\n📊 ${plan.gb} GB · ⏳ ${plan.days} روز\n💰 مبلغ: <b>${price.toLocaleString("fa-IR")}</b> تومان${discNote}\n\nروش پرداخت را انتخاب کنید:`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "💳 کارت به کارت", callback_data: "paycard_" + pid + "_" + price }],
+            [{ text: "💰 پرداخت از کیف پول", callback_data: "paywallet_" + pid + "_" + price }],
+            [{ text: "🔙 بازگشت", callback_data: "shop" }],
+          ],
+        },
+      }
+    );
+    return json({ ok: true });
+  }
+
+  if (data.startsWith("paywallet_")) {
+    const parts = data.split("_");
+    const pid = parseInt(parts[1], 10);
+    const price = parseInt(parts[2], 10) || 0;
+    const plan = await env.DB.prepare("SELECT * FROM plans WHERE id=?").bind(pid).first();
+    const cu = await getCustomer(env.DB, chatId);
+    if (!plan) {
+      await edit("پلن نامعتبر", { reply_markup: backHome() });
+      return json({ ok: true });
+    }
+    if ((cu?.balance || 0) < price) {
+      await edit(
+        `موجودی کافی نیست.\nموجودی: ${(cu?.balance || 0).toLocaleString("fa-IR")} ت\nمبلغ: ${price.toLocaleString("fa-IR")} ت`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "💳 افزایش موجودی", callback_data: "wallet" }],
+              [{ text: "🏠 منو", callback_data: "home" }],
+            ],
+          },
+        }
+      );
+      return json({ ok: true });
+    }
+    await env.DB.prepare("UPDATE tg_customers SET balance=balance-?, discount='' WHERE tg_id=?")
+      .bind(price, chatId).run();
+    if (cu?.discount) {
+      await env.DB.prepare("UPDATE discounts SET used_count=used_count+1 WHERE code=?").bind(cu.discount).run();
+    }
+    await env.DB.prepare(
+      "INSERT INTO orders (tg_id, plan_id, status, created_at, amount, kind) VALUES (?,?,?,?,?,?)"
+    ).bind(chatId, pid, "done", Date.now(), price, "plan").run();
     const order = await env.DB.prepare("SELECT id FROM orders WHERE tg_id=? ORDER BY id DESC LIMIT 1").bind(chatId).first();
-    await send(
-      `<b>سفارش #${order?.id}</b>\n` +
-        `پلن: ${plan.title}\nحجم: ${plan.gb}GB · مدت: ${plan.days} روز\nمبلغ: ${plan.price.toLocaleString("fa-IR")} تومان\n\n` +
-        (c.card ? `کارت: <code>${c.card}</code>\n` : "") +
-        `بعد از پرداخت، رسید را ارسال کن. ادمین تایید می‌کند.`,
-      { reply_markup: { inline_keyboard: [[{ text: "🏠 منو", callback_data: "home" }]] } }
+    await deliverService(env, c, host, chatId, plan, order?.id);
+    await Store.log(env.DB, "tg_wallet_buy", chatId + ":" + pid);
+    return json({ ok: true });
+  }
+
+  if (data.startsWith("paycard_")) {
+    const parts = data.split("_");
+    const pid = parseInt(parts[1], 10);
+    const price = parseInt(parts[2], 10) || 0;
+    const plan = await env.DB.prepare("SELECT * FROM plans WHERE id=?").bind(pid).first();
+    if (!plan) {
+      await edit("پلن نامعتبر", { reply_markup: backHome() });
+      return json({ ok: true });
+    }
+    await env.DB.prepare(
+      "INSERT INTO orders (tg_id, plan_id, status, created_at, amount, kind) VALUES (?,?,?,?,?,?)"
+    ).bind(chatId, pid, "pending", Date.now(), price, "plan").run();
+    const order = await env.DB.prepare("SELECT id FROM orders WHERE tg_id=? ORDER BY id DESC LIMIT 1").bind(chatId).first();
+    await setState(env.DB, chatId, "wait_receipt", String(order?.id || ""));
+    const card = c.card || "کارت تنظیم نشده";
+    await edit(
+      `💳 <b>پرداخت کارت به کارت</b>\n` +
+        `سفارش: #${order?.id}\nپلن: ${plan.title}\nمبلغ: <b>${price.toLocaleString("fa-IR")}</b> تومان\n\n` +
+        `به این کارت واریز کنید:\n<code>${card}</code>\n\nسپس <b>عکس رسید</b> را ارسال کنید.`,
+      { reply_markup: backHome() }
     );
     if (c.tg_admin) {
       await tgApi(c.tg_token, "sendMessage", {
         chat_id: c.tg_admin,
-        text: `🛒 سفارش جدید #${order?.id}\nاز: ${chatId}\n${plan.title} · ${plan.price} ت`,
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "✅ تایید و ساخت", callback_data: "approve_" + order?.id }],
-            [{ text: "❌ رد", callback_data: "reject_" + order?.id }],
-          ],
-        },
+        text: `🛒 سفارش جدید #${order?.id}\nاز: ${chatId}\n${plan.title} · ${price} ت\nمنتظر رسید...`,
       });
     }
     return json({ ok: true });
   }
 
-  if (data === "mysub") {
-    const { results } = await env.DB.prepare("SELECT * FROM users WHERE tg_id=? ORDER BY id DESC").bind(chatId).all();
-    if (!results?.length) {
-      await send("سرویسی نداری.", { reply_markup: { inline_keyboard: [[{ text: "🛒 خرید", callback_data: "shop" }], [{ text: "🏠 منو", callback_data: "home" }]] } });
+  // ── trial ──
+  if (data === "trial") {
+    const cu = await getCustomer(env.DB, chatId);
+    if (cu?.trial_used) {
+      await edit("شما قبلاً اکانت تست دریافت کرده‌اید.", { reply_markup: backHome() });
       return json({ ok: true });
     }
-    const host = new URL(request.url).hostname;
-    let out = "<b>سرویس‌های تو</b>\n\n";
+    const uname = ("trial" + chatId.slice(-8)).replace(/[^a-zA-Z0-9_]/g, "").slice(0, 20);
+    const id = uuid();
+    await env.DB.prepare(
+      `INSERT INTO users (username,uuid,limit_gb,used_gb,expiry_days,created_at,is_active,remark,tg_id)
+       VALUES (?,?,?,0,?,?,1,?,?)`
+    ).bind(uname, id, c.trial_gb, c.trial_days, Date.now(), "trial", chatId).run();
+    await env.DB.prepare("UPDATE tg_customers SET trial_used=1 WHERE tg_id=?").bind(chatId).run();
+    const sub = `https://${host}${ROOT}?sub=${encodeURIComponent(uname)}`;
+    await edit(
+      `🎁 <b>اکانت تست فعال شد</b>\n📊 ${c.trial_gb} GB · ⏳ ${c.trial_days} روز\n\n🔗 <code>${sub}</code>`,
+      { reply_markup: backHome() }
+    );
+    return json({ ok: true });
+  }
+
+  // ── my services ──
+  if (data === "mysub") {
+    const { results } = await env.DB.prepare("SELECT * FROM users WHERE tg_id=? ORDER BY id DESC LIMIT 20").bind(chatId).all();
+    if (!results?.length) {
+      await edit("سرویسی ندارید.", {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🛒 خرید", callback_data: "shop" }],
+            [{ text: "🏠 منو", callback_data: "home" }],
+          ],
+        },
+      });
+      return json({ ok: true });
+    }
+    let out = "<b>📱 سرویس‌های شما</b>\n\n";
+    const rows = [];
     for (const u of results) {
       const used = (u.used_gb || 0).toFixed(2);
       const lim = u.limit_gb > 0 ? u.limit_gb : "∞";
       let days = "∞";
       if (u.expiry_days > 0) {
         const left = Math.ceil((u.created_at + u.expiry_days * 86400000 - Date.now()) / 86400000);
-        days = left > 0 ? left : 0;
+        days = String(left > 0 ? left : 0);
       }
       const sub = `https://${host}${ROOT}?sub=${encodeURIComponent(u.username)}`;
       out += `👤 <code>${u.username}</code>\n📊 ${used}/${lim} GB · ⏳ ${days} روز\n🔗 <code>${sub}</code>\n\n`;
+      rows.push([{ text: `📄 ${u.username}`, callback_data: "svc_" + u.id }]);
     }
-    await send(out, { reply_markup: { inline_keyboard: [[{ text: "🏠 منو", callback_data: "home" }]] } });
+    rows.push([{ text: "🏠 منو", callback_data: "home" }]);
+    await edit(out, { reply_markup: { inline_keyboard: rows } });
     return json({ ok: true });
   }
 
-  // admin approve
+  if (data.startsWith("svc_")) {
+    const uid = parseInt(data.slice(4), 10);
+    const u = await env.DB.prepare("SELECT * FROM users WHERE id=? AND tg_id=?").bind(uid, chatId).first();
+    if (!u) {
+      await edit("یافت نشد", { reply_markup: backHome() });
+      return json({ ok: true });
+    }
+    const sub = `https://${host}${ROOT}?sub=${encodeURIComponent(u.username)}`;
+    const status = `https://${host}${ROOT}?u=${encodeURIComponent(u.username)}`;
+    await edit(
+      `👤 <code>${u.username}</code>\n📊 ${(u.used_gb || 0).toFixed(2)}/${u.limit_gb || "∞"} GB\n\n🔗 ساب:\n<code>${sub}</code>\n\n🌐 وضعیت:\n<code>${status}</code>`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🔄 تمدید / حجم اضافه", callback_data: "shop" }],
+            [{ text: "🔙 سرویس‌ها", callback_data: "mysub" }],
+          ],
+        },
+      }
+    );
+    return json({ ok: true });
+  }
+
+  // ── wallet ──
+  if (data === "wallet") {
+    const cu = await getCustomer(env.DB, chatId);
+    await edit(
+      `💰 <b>کیف پول</b>\nموجودی: <b>${Number(cu?.balance || 0).toLocaleString("fa-IR")}</b> تومان\n\nبرای افزایش موجودی مبلغ را به تومان بفرستید (مثلاً 50000)`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "➕ افزایش موجودی", callback_data: "charge" }],
+            [{ text: "🏠 منو", callback_data: "home" }],
+          ],
+        },
+      }
+    );
+    return json({ ok: true });
+  }
+  if (data === "charge") {
+    await setState(env.DB, chatId, "wait_charge");
+    await edit("مبلغ افزایش موجودی را به تومان وارد کنید (حداقل ۱۰۰۰۰):", { reply_markup: backHome() });
+    return json({ ok: true });
+  }
+
+  // ── referral ──
+  if (data === "ref") {
+    const link = botUsername
+      ? `https://t.me/${botUsername}?start=${chatId}`
+      : `لینک: /start را با کد ${chatId} برای دوست بفرستید`;
+    await edit(
+      `👥 <b>دعوت دوستان</b>\nبا هر دعوت موفق <b>${c.referral_bonus.toLocaleString("fa-IR")}</b> تومان پاداش می‌گیرید.\n\n🔗 لینک اختصاصی:\n<code>${link}</code>`,
+      { reply_markup: backHome() }
+    );
+    return json({ ok: true });
+  }
+
+  // ── discount ──
+  if (data === "discount") {
+    await setState(env.DB, chatId, "wait_discount");
+    await edit("🎫 کد تخفیف را وارد کنید:", { reply_markup: backHome() });
+    return json({ ok: true });
+  }
+
+  // ── support ──
+  if (data === "support") {
+    const support = c.tg_support || (c.tg_admin ? `شناسه ادمین: ${c.tg_admin}` : "پشتیبانی تنظیم نشده");
+    await setState(env.DB, chatId, "wait_support");
+    await edit(`🆘 <b>پشتیبانی</b>\n${support}\n\nپیام خود را بنویسید:`, { reply_markup: backHome() });
+    return json({ ok: true });
+  }
+
+  // ── help ──
+  if (data === "help" || text === "/help") {
+    await edit(
+      `<b>ℹ️ راهنما</b>\n\n` +
+        `• خرید: پلن را انتخاب و پرداخت کنید\n` +
+        `• تست: یک‌بار اکانت آزمایشی رایگان\n` +
+        `• سرویس‌ها: لینک ساب و وضعیت حجم\n` +
+        `• کیف پول: موجودی و افزایش اعتبار\n` +
+        `• دعوت: با لینک اختصاصی پاداش بگیرید\n\n` +
+        `کلاینت پیشنهادی: v2rayNG · Hiddify · Streisand`,
+      { reply_markup: backHome() }
+    );
+    return json({ ok: true });
+  }
+
+  // ── admin approve / reject ──
   if (isAdmin && data.startsWith("approve_")) {
     const oid = parseInt(data.slice(8), 10);
     const order = await env.DB.prepare("SELECT * FROM orders WHERE id=?").bind(oid).first();
-    if (!order || order.status !== "pending") { await send("سفارش نامعتبر"); return json({ ok: true }); }
-    const plan = await env.DB.prepare("SELECT * FROM plans WHERE id=?").bind(order.plan_id).first();
-    const uname = "tg" + order.tg_id.slice(-8) + oid;
-    const id = uuid();
-    await env.DB.prepare(
-      `INSERT INTO users (username,uuid,limit_gb,used_gb,expiry_days,created_at,is_active,remark,tg_id)
-       VALUES (?,?,?,0,?,?,1,?,?)`
-    ).bind(uname, id, plan?.gb || 10, plan?.days || 30, Date.now(), "tg-order-" + oid, order.tg_id).run();
-    await env.DB.prepare("UPDATE orders SET status='done', username=? WHERE id=?").bind(uname, oid).run();
-    const host = new URL(request.url).hostname;
-    const sub = `https://${host}${ROOT}?sub=${encodeURIComponent(uname)}`;
-    await tgApi(c.tg_token, "sendMessage", {
-      chat_id: order.tg_id,
-      text: `✅ سفارش #${oid} تایید شد\nکاربر: <code>${uname}</code>\nساب:\n<code>${sub}</code>`,
-      parse_mode: "HTML",
-    });
-    await send(`تایید شد · ${uname}`);
+    if (!order || order.status !== "pending") {
+      await send("سفارش نامعتبر یا قبلاً پردازش شده");
+      return json({ ok: true });
+    }
+    if (order.kind === "charge") {
+      await env.DB.prepare("UPDATE tg_customers SET balance=balance+? WHERE tg_id=?")
+        .bind(order.amount || 0, order.tg_id).run();
+      await env.DB.prepare("UPDATE orders SET status='done' WHERE id=?").bind(oid).run();
+      await tgApi(c.tg_token, "sendMessage", {
+        chat_id: order.tg_id,
+        text: `✅ افزایش موجودی تایید شد: +${Number(order.amount || 0).toLocaleString("fa-IR")} تومان`,
+      });
+      await send(`موجودی شارژ شد برای ${order.tg_id}`);
+    } else {
+      const plan = await env.DB.prepare("SELECT * FROM plans WHERE id=?").bind(order.plan_id).first();
+      if (!plan) {
+        await send("پلن یافت نشد");
+        return json({ ok: true });
+      }
+      const cu = await getCustomer(env.DB, order.tg_id);
+      if (cu?.discount) {
+        await env.DB.prepare("UPDATE discounts SET used_count=used_count+1 WHERE code=?").bind(cu.discount).run();
+        await env.DB.prepare("UPDATE tg_customers SET discount='' WHERE tg_id=?").bind(order.tg_id).run();
+      }
+      await deliverService(env, c, host, order.tg_id, plan, oid);
+      await send(`تایید شد · سفارش #${oid}`);
+    }
     await Store.log(env.DB, "tg_approve", String(oid));
     return json({ ok: true });
   }
 
   if (isAdmin && data.startsWith("reject_")) {
     const oid = parseInt(data.slice(7), 10);
-    await env.DB.prepare("UPDATE orders SET status='rejected' WHERE id=?").bind(oid).run();
     const order = await env.DB.prepare("SELECT * FROM orders WHERE id=?").bind(oid).first();
-    if (order) await tgApi(c.tg_token, "sendMessage", { chat_id: order.tg_id, text: `❌ سفارش #${oid} رد شد.` });
+    await env.DB.prepare("UPDATE orders SET status='rejected' WHERE id=?").bind(oid).run();
+    if (order) {
+      await tgApi(c.tg_token, "sendMessage", { chat_id: order.tg_id, text: `❌ سفارش #${oid} رد شد.` });
+    }
     await send("رد شد");
     return json({ ok: true });
   }
 
+  if (isAdmin && data.startsWith("reply_")) {
+    await setState(env.DB, chatId, data);
+    await send("پیام پاسخ را بنویسید:");
+    return json({ ok: true });
+  }
+
+  // ── admin panel ──
   if (isAdmin && data === "admin") {
     const total = await env.DB.prepare("SELECT COUNT(*) as c FROM users").first();
     const pending = await env.DB.prepare("SELECT COUNT(*) as c FROM orders WHERE status='pending'").first();
-    await send(`<b>ادمین</b>\nکاربران: ${total?.c || 0}\nسفارش باز: ${pending?.c || 0}\n\nپنل وب: /8080/dash`, {
-      reply_markup: { inline_keyboard: [[{ text: "🏠 منو", callback_data: "home" }]] },
+    const customers = await env.DB.prepare("SELECT COUNT(*) as c FROM tg_customers").first();
+    const bal = await env.DB.prepare("SELECT COALESCE(SUM(balance),0) as s FROM tg_customers").first();
+    await edit(
+      `<b>🛠 پنل مدیریت</b>\n\n` +
+        `👥 مشتریان ربات: ${customers?.c || 0}\n` +
+        `🔑 کانفیگ‌ها: ${total?.c || 0}\n` +
+        `⏳ سفارش باز: ${pending?.c || 0}\n` +
+        `💰 مجموع موجودی‌ها: ${Number(bal?.s || 0).toLocaleString("fa-IR")} ت\n\n` +
+        `وب: <code>https://${host}${DASH}</code>`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "📋 سفارش‌های باز", callback_data: "adm_orders" }],
+            [{ text: "📢 پیام همگانی", callback_data: "adm_broadcast" }],
+            [{ text: "🎫 ساخت کد تخفیف", callback_data: "adm_disc" }],
+            [{ text: "🏠 منو", callback_data: "home" }],
+          ],
+        },
+      }
+    );
+    return json({ ok: true });
+  }
+
+  if (isAdmin && data === "adm_orders") {
+    const { results } = await env.DB.prepare(
+      "SELECT * FROM orders WHERE status='pending' ORDER BY id DESC LIMIT 15"
+    ).all();
+    if (!results?.length) {
+      await edit("سفارش بازی نیست.", { reply_markup: { inline_keyboard: [[{ text: "🔙", callback_data: "admin" }]] } });
+      return json({ ok: true });
+    }
+    const rows = results.map((o) => [
+      {
+        text: `#${o.id} · ${o.kind} · ${o.amount || 0}ت · ${o.tg_id}`,
+        callback_data: "adm_ord_" + o.id,
+      },
+    ]);
+    rows.push([{ text: "🔙", callback_data: "admin" }]);
+    await edit("📋 سفارش‌های در انتظار:", { reply_markup: { inline_keyboard: rows } });
+    return json({ ok: true });
+  }
+
+  if (isAdmin && data.startsWith("adm_ord_")) {
+    const oid = parseInt(data.slice(8), 10);
+    const o = await env.DB.prepare("SELECT * FROM orders WHERE id=?").bind(oid).first();
+    if (!o) {
+      await edit("یافت نشد", { reply_markup: backHome() });
+      return json({ ok: true });
+    }
+    await edit(
+      `سفارش #${o.id}\nنوع: ${o.kind}\nمبلغ: ${o.amount}\nکاربر: <code>${o.tg_id}</code>\nوضعیت: ${o.status}`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "✅ تایید", callback_data: "approve_" + oid },
+              { text: "❌ رد", callback_data: "reject_" + oid },
+            ],
+            [{ text: "🔙", callback_data: "adm_orders" }],
+          ],
+        },
+      }
+    );
+    return json({ ok: true });
+  }
+
+  if (isAdmin && data === "adm_broadcast") {
+    await setState(env.DB, chatId, "wait_broadcast");
+    await edit("متن پیام همگانی را بفرستید:", { reply_markup: backHome() });
+    return json({ ok: true });
+  }
+
+  if (isAdmin && data === "adm_disc") {
+    const code = "OFF" + Math.random().toString(36).slice(2, 8).toUpperCase();
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO discounts (code,percent,max_uses,used_count,is_active) VALUES (?,?,?,?,1)"
+    ).bind(code, 20, 50, 0).run();
+    await edit(`🎫 کد ساخته شد:\n<code>${code}</code>\n۲۰٪ تخفیف · حداکثر ۵۰ استفاده`, {
+      reply_markup: { inline_keyboard: [[{ text: "🔙", callback_data: "admin" }]] },
     });
     return json({ ok: true });
   }
 
   // fallback
   if (text) {
-    await send("از منو استفاده کن.", { reply_markup: mainKb });
+    await send("از دکمه‌های منو استفاده کنید 👇", { reply_markup: mainKeyboard(isAdmin) });
   }
   return json({ ok: true });
 }
+
 
 /* ─── API ─── */
 async function handleApi(request, url, env) {
@@ -874,6 +1414,8 @@ async function handleApi(request, url, env) {
       protocol: "protocol", ports: "ports", clean_ips: "clean_ips", upstream: "upstream",
       sub_prefix: "sub_prefix", panel_title: "panel_title", name_template: "name_template", fingerprint: "fingerprint",
       tg_token: "tg_token", tg_admin: "tg_admin", tg_welcome: "tg_welcome", pay_card: "pay_card",
+      tg_channel: "tg_channel", tg_support: "tg_support",
+      trial_gb: "trial_gb", trial_days: "trial_days", referral_bonus: "referral_bonus",
     };
     for (const [k, sk] of Object.entries(map)) {
       if (body[k] !== undefined) await Store.set(env.DB, sk, String(body[k]));
@@ -922,11 +1464,14 @@ async function handleApi(request, url, env) {
   }
 
   if (path === "/tg-webhook" && method === "POST") {
-    const body = await request.json().catch(() => ({}));
     const c = await cfg(env.DB);
     if (!c.tg_token) return json({ error: "no token" }, 400);
     const hook = `${url.origin}/api/telegram`;
     const r = await tgApi(c.tg_token, "setWebhook", { url: hook, drop_pending_updates: true });
+    try {
+      const me = await tgApi(c.tg_token, "getMe", {});
+      if (me?.result?.username) await Store.set(env.DB, "tg_bot_username", me.result.username);
+    } catch (_) {}
     return json(r);
   }
 
@@ -1147,13 +1692,18 @@ tr:hover td{background:rgba(255,255,255,.02)}
 
 <div class="sec" id="sec-tg">
   <div class="glass card-in">
-    <h4>ربات فروش تلگرام</h4>
+    <h4>ربات فروش تلگرام (پیشرفته)</h4>
     <div class="grid2">
       <div class="field"><label>Bot Token</label><input id="tgToken" dir="ltr" style="text-align:left"></div>
       <div class="field"><label>Admin Chat ID</label><input id="tgAdmin" dir="ltr" style="text-align:left"></div>
+      <div class="field"><label>کانال اجباری (@channel)</label><input id="tgChannel" dir="ltr" style="text-align:left" placeholder="@mychannel"></div>
+      <div class="field"><label>آیدی پشتیبانی</label><input id="tgSupport" dir="ltr" style="text-align:left"></div>
+      <div class="field"><label>حجم تست (GB)</label><input id="trialGb" type="number" value="1" step="0.1"></div>
+      <div class="field"><label>روز تست</label><input id="trialDays" type="number" value="1"></div>
+      <div class="field"><label>پاداش دعوت (تومان)</label><input id="refBonus" type="number" value="5000"></div>
+      <div class="field"><label>شماره کارت</label><input id="payCard" dir="ltr" style="text-align:left"></div>
     </div>
     <div class="field"><label>پیام خوش‌آمد</label><input id="tgWelcome"></div>
-    <div class="field"><label>شماره کارت</label><input id="payCard" dir="ltr" style="text-align:left"></div>
     <div class="toolbar" style="margin-top:8px">
       <button class="btn btn-a" onclick="saveTg()">ذخیره ربات</button>
       <button class="btn btn-g" onclick="setHook()">فعال‌سازی Webhook</button>
@@ -1465,6 +2015,11 @@ async function loadSettings() {
   if ($('tgAdmin')) $('tgAdmin').value = s.tg_admin || '';
   if ($('tgWelcome')) $('tgWelcome').value = s.tg_welcome || '';
   if ($('payCard')) $('payCard').value = s.card || s.pay_card || '';
+  if ($('tgChannel')) $('tgChannel').value = s.tg_channel || '';
+  if ($('tgSupport')) $('tgSupport').value = s.tg_support || '';
+  if ($('trialGb')) $('trialGb').value = s.trial_gb != null ? s.trial_gb : 1;
+  if ($('trialDays')) $('trialDays').value = s.trial_days != null ? s.trial_days : 1;
+  if ($('refBonus')) $('refBonus').value = s.referral_bonus != null ? s.referral_bonus : 5000;
 }
 
 async function saveAdv() {
@@ -1509,7 +2064,12 @@ async function saveTg() {
       tg_token: $('tgToken') ? $('tgToken').value.trim() : '',
       tg_admin: $('tgAdmin') ? $('tgAdmin').value.trim() : '',
       tg_welcome: $('tgWelcome') ? $('tgWelcome').value : '',
-      pay_card: $('payCard') ? $('payCard').value.trim() : ''
+      pay_card: $('payCard') ? $('payCard').value.trim() : '',
+      tg_channel: $('tgChannel') ? $('tgChannel').value.trim() : '',
+      tg_support: $('tgSupport') ? $('tgSupport').value.trim() : '',
+      trial_gb: $('trialGb') ? $('trialGb').value : '1',
+      trial_days: $('trialDays') ? $('trialDays').value : '1',
+      referral_bonus: $('refBonus') ? $('refBonus').value : '5000'
     })
   });
   alert('ذخیره شد');
