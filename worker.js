@@ -1228,7 +1228,7 @@ function addCleanIp() {
   var ta = $('cleanIps');
   if (!ta) return;
   var cur = ta.value.trim();
-  ta.value = cur ? (cur + '\n' + line) : line;
+  ta.value = cur ? (cur + '\\n' + line) : line;
   $('cipIp').value = '';
   $('cipName').value = '';
   previewCleanIps();
@@ -1238,7 +1238,7 @@ function previewCleanIps() {
   var box = $('cipPreview');
   var ta = $('cleanIps');
   if (!box || !ta) return;
-  var lines = ta.value.split(/[\n,]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+  var lines = ta.value.split(/[\\n,]+/).map(function (s) { return s.trim(); }).filter(Boolean);
   box.innerHTML = lines.length
     ? ('<span class="badge badge-on" style="margin-bottom:8px;display:inline-block">' + lines.length + ' کانفیگ</span>')
     : '';
