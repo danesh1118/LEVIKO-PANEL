@@ -31,6 +31,59 @@ async function sha256(t) {
   const buf = await crypto.subtle.digest("SHA-256", enc.encode(t));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+/** Compact SHA-224 (needed for Trojan password hash) */
+function sha224(str) {
+  const K = new Uint32Array([
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+  ]);
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  const bytes = enc.encode(str);
+  const bitLen = bytes.length * 8;
+  const withPad = new Uint8Array(((bytes.length + 9 + 63) >> 6) << 6);
+  withPad.set(bytes);
+  withPad[bytes.length] = 0x80;
+  const dv = new DataView(withPad.buffer);
+  dv.setUint32(withPad.length - 4, bitLen >>> 0, false);
+  dv.setUint32(withPad.length - 8, Math.floor(bitLen / 0x100000000), false);
+  let h0 = 0xc1059ed8, h1 = 0x367cd507, h2 = 0x3070dd17, h3 = 0xf70e5939;
+  let h4 = 0xffc00b31, h5 = 0x68581511, h6 = 0x64f98fa7, h7 = 0xbefa4fa4;
+  const w = new Uint32Array(64);
+  for (let i = 0; i < withPad.length; i += 64) {
+    for (let j = 0; j < 16; j++) w[j] = dv.getUint32(i + j * 4, false);
+    for (let j = 16; j < 64; j++) {
+      const s0 = rotr(w[j - 15], 7) ^ rotr(w[j - 15], 18) ^ (w[j - 15] >>> 3);
+      const s1 = rotr(w[j - 2], 17) ^ rotr(w[j - 2], 19) ^ (w[j - 2] >>> 10);
+      w[j] = (w[j - 16] + s0 + w[j - 7] + s1) >>> 0;
+    }
+    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+    for (let j = 0; j < 64; j++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + K[j] + w[j]) >>> 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0;
+  }
+  const out = new Uint8Array(28);
+  const o = new DataView(out.buffer);
+  o.setUint32(0, h0, false); o.setUint32(4, h1, false); o.setUint32(8, h2, false);
+  o.setUint32(12, h3, false); o.setUint32(16, h4, false); o.setUint32(20, h5, false);
+  o.setUint32(24, h6, false);
+  return [...out].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 const json = (d, s = 200, h = {}) =>
   new Response(JSON.stringify(d), { status: s, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...h } });
 const html = (b, s = 200) =>
@@ -110,7 +163,7 @@ async function cfg(db) {
   // default info rows if empty and legacy flag on
   const legacyInfo = (await Store.get(db, "info_cfg", "1")) !== "0";
   if (!info_entries.length && legacyInfo) {
-    info_entries = ["📊 {usage}", "⏳ {expiry}"];
+    info_entries = ["📊 {used} / {remain}", "⏳ {expiry}"];
   }
   return {
     protocol: (await Store.get(db, "protocol", "vless")) || "vless",
@@ -152,10 +205,24 @@ function parseCleanLines(raw) {
 }
 
 function applyTemplate(tpl, vars) {
-  return String(tpl || "").replace(/\{([A-Z_]+)\}/g, (_, k) => (vars[k] != null && vars[k] !== "" ? String(vars[k]) : ""));
+  return String(tpl || "").replace(/\{([A-Za-z0-9_]+)\}/g, (_, k) => {
+    if (vars[k] != null && vars[k] !== "") return String(vars[k]);
+    const up = k.toUpperCase();
+    if (vars[up] != null && vars[up] !== "") return String(vars[up]);
+    const lo = k.toLowerCase();
+    if (vars[lo] != null && vars[lo] !== "") return String(vars[lo]);
+    return "";
+  });
 }
 
-/* ─── VLESS proxy ─── */
+/* ─── VLESS + Trojan proxy ─── */
+async function checkUser(env, user) {
+  if (!user || user.is_active !== 1) return false;
+  if (user.limit_gb > 0 && user.used_gb >= user.limit_gb) return false;
+  if (user.expiry_days > 0 && Date.now() > user.created_at + user.expiry_days * 86400000) return false;
+  return true;
+}
+
 async function handleVless(request, env) {
   if ((request.headers.get("Upgrade") || "").toLowerCase() !== "websocket")
     return new Response("Expected WebSocket", { status: 426 });
@@ -174,6 +241,16 @@ async function handleVless(request, env) {
       earlyData = Uint8Array.from(raw, (c) => c.charCodeAt(0));
     }
   } catch (_) {}
+  // Trojan early data can also arrive via sec-websocket-protocol
+  try {
+    if (!earlyData) {
+      const swp = request.headers.get("sec-websocket-protocol") || "";
+      if (swp) {
+        const raw = atob(swp.replace(/-/g, "+").replace(/_/g, "/"));
+        earlyData = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+      }
+    }
+  } catch (_) {}
 
   const flush = async () => {
     if (!username || !(bytesUp || bytesDown)) return;
@@ -184,17 +261,37 @@ async function handleVless(request, env) {
     bytesUp = bytesDown = 0;
   };
 
-  const processHeader = async (chunk) => {
+  const pipeRemote = async (host, port, payload, isVless, versionByte) => {
+    try {
+      remote = connect({ hostname: host, port });
+      const w = remote.writable.getWriter();
+      if (payload?.byteLength) { await w.write(payload); bytesUp += payload.byteLength; }
+      w.releaseLock();
+      if (isVless) server.send(new Uint8Array([versionByte, 0]));
+      (async () => {
+        try {
+          const r = remote.readable.getReader();
+          while (true) {
+            const { done, value } = await r.read();
+            if (done) break;
+            if (value?.byteLength) { bytesDown += value.byteLength; if (server.readyState === 1) server.send(value); }
+          }
+        } catch (_) {} finally { try { server.close(); } catch (_) {} await flush(); }
+      })();
+      return true;
+    } catch (_) {
+      try { server.close(1011); } catch (__) {}
+      return false;
+    }
+  };
+
+  const processVless = async (chunk) => {
     const id = parseUUID(chunk);
-    if (!id) { try { server.close(1002); } catch (_) {} return false; }
+    if (!id) return false;
     let user;
     try { user = await env.DB.prepare("SELECT * FROM users WHERE uuid=?").bind(id).first(); }
-    catch (_) { try { server.close(1011); } catch (__) {} return false; }
-    if (!user || user.is_active !== 1) { try { server.close(1008); } catch (_) {} return false; }
-    if (user.limit_gb > 0 && user.used_gb >= user.limit_gb) { try { server.close(1008); } catch (_) {} return false; }
-    if (user.expiry_days > 0 && Date.now() > user.created_at + user.expiry_days * 86400000) {
-      try { server.close(1008); } catch (_) {} return false;
-    }
+    catch (_) { return false; }
+    if (!(await checkUser(env, user))) { try { server.close(1008); } catch (_) {} return false; }
     username = user.username;
     let offset = 17;
     const u8 = new Uint8Array(chunk);
@@ -213,28 +310,63 @@ async function handleVless(request, env) {
         const parts = [];
         for (let i = 0; i < 8; i++) { parts.push(((u8[offset] << 8) | u8[offset+1]).toString(16)); offset += 2; }
         host = parts.join(":");
-      } else { try { server.close(1002); } catch (_) {} return false; }
-    } catch (_) { try { server.close(1002); } catch (__) {} return false; }
+      } else return false;
+    } catch (_) { return false; }
+    return pipeRemote(host, port, u8.slice(offset), true, chunk[0]);
+  };
 
-    const payload = u8.slice(offset);
+  const processTrojan = async (chunk) => {
+    const u8 = new Uint8Array(chunk);
+    if (u8.byteLength < 58) return false;
+    // 56 hex chars of sha224(password) + \r\n
+    const hashHex = dec.decode(u8.slice(0, 56));
+    if (!/^[0-9a-f]{56}$/i.test(hashHex)) return false;
+    if (u8[56] !== 0x0d || u8[57] !== 0x0a) return false;
+    // Find matching user by computing sha224 of each uuid is expensive;
+    // instead: get all active users and match hash (limit scan)
+    let user = null;
     try {
-      remote = connect({ hostname: host, port });
-      const w = remote.writable.getWriter();
-      if (payload.byteLength) { await w.write(payload); bytesUp += payload.byteLength; }
-      w.releaseLock();
-      server.send(new Uint8Array([chunk[0], 0]));
-      (async () => {
-        try {
-          const r = remote.readable.getReader();
-          while (true) {
-            const { done, value } = await r.read();
-            if (done) break;
-            if (value?.byteLength) { bytesDown += value.byteLength; if (server.readyState === 1) server.send(value); }
-          }
-        } catch (_) {} finally { try { server.close(); } catch (_) {} await flush(); }
-      })();
-    } catch (_) { try { server.close(1011); } catch (__) {} return false; }
-    return true;
+      const { results } = await env.DB.prepare("SELECT * FROM users WHERE is_active=1 LIMIT 500").all();
+      for (const u of results || []) {
+        if (sha224(u.uuid) === hashHex.toLowerCase()) { user = u; break; }
+      }
+    } catch (_) { return false; }
+    if (!(await checkUser(env, user))) { try { server.close(1008); } catch (_) {} return false; }
+    username = user.username;
+    let offset = 58;
+    if (u8.byteLength <= offset + 3) return true;
+    const cmd = u8[offset++]; // 0x01 CONNECT
+    if (cmd !== 0x01) { try { server.close(1002); } catch (_) {} return false; }
+    const atyp = u8[offset++];
+    let host = "";
+    try {
+      if (atyp === 1) { host = `${u8[offset]}.${u8[offset+1]}.${u8[offset+2]}.${u8[offset+3]}`; offset += 4; }
+      else if (atyp === 3) { const len = u8[offset++]; host = dec.decode(u8.slice(offset, offset + len)); offset += len; }
+      else if (atyp === 4) {
+        const parts = [];
+        for (let i = 0; i < 8; i++) { parts.push(((u8[offset] << 8) | u8[offset+1]).toString(16)); offset += 2; }
+        host = parts.join(":");
+      } else return false;
+    } catch (_) { return false; }
+    if (u8.byteLength < offset + 4) return true;
+    const port = (u8[offset] << 8) | u8[offset + 1];
+    offset += 2;
+    // trailing \r\n
+    if (u8[offset] === 0x0d && u8[offset + 1] === 0x0a) offset += 2;
+    return pipeRemote(host, port, u8.slice(offset), false, 0);
+  };
+
+  const processHeader = async (chunk) => {
+    // Detect: VLESS starts with version byte 0/1 + UUID; Trojan starts with 56 hex chars
+    const u8 = new Uint8Array(chunk);
+    let ok = false;
+    if (u8.byteLength >= 17 && (u8[0] === 0 || u8[0] === 1) && parseUUID(chunk)) {
+      ok = await processVless(chunk);
+    } else if (u8.byteLength >= 58) {
+      ok = await processTrojan(chunk);
+    }
+    if (!ok) { try { server.close(1002); } catch (_) {} }
+    return ok;
   };
 
   server.addEventListener("message", async (ev) => {
@@ -255,28 +387,45 @@ async function handleVless(request, env) {
 
 /* ─── subscription builder ─── */
 function userUsageVars(user) {
-  const used = (user.used_gb || 0).toFixed(2);
-  const lim = user.limit_gb > 0 ? user.limit_gb + "GB" : "∞";
+  const usedNum = Number(user.used_gb) || 0;
+  const limNum = Number(user.limit_gb) || 0;
+  const used = usedNum.toFixed(2);
+  const lim = limNum > 0 ? limNum + " Gig" : "∞";
+  const remainGb = limNum > 0 ? Math.max(0, limNum - usedNum).toFixed(2) + " Gig" : "∞";
   let days = "∞";
   let expiryStr = "∞";
+  let leftDays = -1;
   if (user.expiry_days > 0) {
-    const left = Math.ceil((user.created_at + user.expiry_days * 86400000 - Date.now()) / 86400000);
-    days = String(left > 0 ? left : 0);
-    expiryStr = days + "d";
+    leftDays = Math.ceil((user.created_at + user.expiry_days * 86400000 - Date.now()) / 86400000);
+    days = String(leftDays > 0 ? leftDays : 0);
+    expiryStr = days + " days";
   }
   return {
     usage: used + "/" + lim,
+    used: used + " Gig",
+    remain: remainGb,
     expiry: expiryStr,
     days,
     USER: user.username,
+    leftDays,
   };
 }
 
 function infoLineFromTemplate(tpl, user, prefix) {
   const uv = userUsageVars(user);
   const name = encodeURIComponent(applyTemplate(tpl, {
-    PREFIX: prefix, USER: uv.USER, usage: uv.usage, expiry: uv.expiry,
-    USAGE: uv.usage, EXPIRY: uv.expiry, DAYS: uv.days,
+    PREFIX: prefix,
+    USER: uv.USER,
+    usage: uv.usage,
+    used: uv.used,
+    remain: uv.remain,
+    expiry: uv.expiry,
+    days: uv.days,
+    USAGE: uv.usage,
+    USED: uv.used,
+    REMAIN: uv.remain,
+    EXPIRY: uv.expiry,
+    DAYS: uv.days,
   }));
   return `vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1?encryption=none&security=none&type=ws&path=%2F#${name}`;
 }
@@ -308,14 +457,17 @@ function buildUserLinks(host, user, c) {
       FLAG: "", COUNTRY: "", CITY: "", ISP: "",
     };
     const name = encodeURIComponent(applyTemplate(tpl, vars).replace(/\s·\s$/g, "").replace(/^\s·\s/g, "").trim() || prefix);
+    const fp = c.fingerprint || "chrome";
     if (protocol === "trojan") {
-      const sec = tls ? "tls" : "none";
-      const sni = tls ? `&sni=${host}&fp=${c.fingerprint || "chrome"}` : "";
-      return `trojan://${user.uuid}@${addr}:${port}?security=${sec}${sni}&type=ws&host=${host}&path=${path}#${name}`;
+      if (tls) {
+        return `trojan://${user.uuid}@${addr}:${port}?security=tls&sni=${host}&fp=${fp}&alpn=h2%2Chttp%2F1.1&type=ws&host=${host}&path=${path}#${name}`;
+      }
+      return `trojan://${user.uuid}@${addr}:${port}?security=none&type=ws&host=${host}&path=${path}#${name}`;
     }
-    const sec = tls ? "tls" : "none";
-    const sni = tls ? `&sni=${host}&fp=${c.fingerprint || "chrome"}` : "";
-    return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=${sec}${sni}&type=ws&host=${host}&path=${path}#${name}`;
+    if (tls) {
+      return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=tls&sni=${host}&fp=${fp}&alpn=h2%2Chttp%2F1.1&type=ws&host=${host}&path=${path}#${name}`;
+    }
+    return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=none&type=ws&host=${host}&path=${path}#${name}`;
   };
 
   if (clean.length) {
@@ -1102,10 +1254,12 @@ async function loadUsers() {
         ? '<span class="badge badge-on">فعال</span>'
         : '<span class="badge badge-off">غیرفعال</span>');
     var sub = root + '${ROOT}?sub=' + encodeURIComponent(x.username);
+    var stUrl = root + '${ROOT}?u=' + encodeURIComponent(x.username);
     return '<tr><td><strong>' + x.username + '</strong><br><span style="font-size:.68rem;color:var(--faint)">' +
       String(x.uuid).slice(0, 8) + '…</span></td><td>' + st + '</td><td>' + used + '/' + lim +
       '</td><td>' + days + '</td><td class="acts">' +
       '<button type="button" class="btn btn-g" data-sub="' + sub.replace(/"/g, '') + '">ساب</button>' +
+      '<button type="button" class="btn btn-g" data-status="' + stUrl.replace(/"/g, '') + '">وضعیت</button>' +
       '<button type="button" class="btn btn-g" data-toggle="' + x.id + '" data-v="' + (x.is_active ? 0 : 1) + '">' +
       (x.is_active ? 'قطع' : 'فعال') + '</button>' +
       '<button type="button" class="btn btn-g" data-reset="' + x.id + '">ریست</button>' +
@@ -1116,6 +1270,7 @@ async function loadUsers() {
     var t = ev.target.closest('button');
     if (!t) return;
     if (t.dataset.sub) copy(t.dataset.sub);
+    if (t.dataset.status) window.open(t.dataset.status, '_blank');
     if (t.dataset.toggle) toggle(+t.dataset.toggle, +t.dataset.v);
     if (t.dataset.reset) resetT(+t.dataset.reset);
     if (t.dataset.del) del(+t.dataset.del);
@@ -1193,7 +1348,7 @@ function insertVar(v) {
 function renderInfoRows(list) {
   var box = $('infoList');
   if (!box) return;
-  if (!list || !list.length) list = ['📊 {usage}', '⏳ {expiry}'];
+  if (!list || !list.length) list = ['📊 {used} / {remain}', '⏳ {expiry}'];
   box.innerHTML = list.map(function (t, i) {
     return '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">' +
       '<input data-info="' + i + '" value="' + String(t).replace(/"/g, '&quot;') + '" dir="ltr" style="text-align:left;flex:1">' +
@@ -1415,6 +1570,133 @@ loadUsers();
 </script></body></html>`;
 }
 
+function statusPage(user, c, origin) {
+  const uv = userUsageVars(user);
+  const used = Number(user.used_gb) || 0;
+  const lim = Number(user.limit_gb) || 0;
+  const pct = lim > 0 ? Math.min(100, Math.round((used / lim) * 100)) : 0;
+  const subUrl = origin + ROOT + "?sub=" + encodeURIComponent(user.username);
+  const title = c.title || "Leviko";
+  const active = user.is_active === 1 && (uv.leftDays < 0 || uv.leftDays > 0);
+  const statusTxt = !user.is_active ? "غیرفعال" : (uv.leftDays === 0 ? "منقضی" : "فعال");
+  const statusClr = !user.is_active || uv.leftDays === 0 ? "#f87171" : "#34d399";
+
+  return `<!DOCTYPE html><html lang="fa" dir="rtl"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} · ${user.username}</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;700;800&display=swap');
+:root{--bg:#06060c;--card:rgba(20,20,36,.92);--line:rgba(255,255,255,.08);--txt:#f4f2ff;--mut:#9a96b5;--p:#8b5cf6;--ok:#34d399;--err:#f87171}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Vazirmatn,system-ui,sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;line-height:1.6}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 55% 40% at 15% 0%,rgba(139,92,246,.22),transparent 55%),radial-gradient(ellipse 45% 35% at 90% 100%,rgba(52,211,153,.07),transparent 50%)}
+.wrap{position:relative;z-index:1;max-width:520px;margin:0 auto;padding:24px 16px 60px}
+.brand{text-align:center;margin-bottom:22px}
+.brand .logo{width:64px;height:64px;margin:0 auto 12px;border-radius:18px;background:linear-gradient(145deg,#c4b5fd,#7c3aed);display:grid;place-items:center;font-size:1.6rem;font-weight:900;color:#fff;box-shadow:0 12px 36px rgba(139,92,246,.4)}
+.brand h1{font-size:1.35rem;font-weight:800}.brand p{color:var(--mut);font-size:.88rem}
+.card{background:linear-gradient(155deg,rgba(255,255,255,.06),rgba(255,255,255,.015));border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:14px;backdrop-filter:blur(20px)}
+.card h3{font-size:.95rem;font-weight:800;margin-bottom:12px;color:#c4b5fd}
+.row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:.9rem}
+.row .l{color:var(--mut)}.row .v{font-weight:700}
+.badge{display:inline-block;padding:4px 12px;border-radius:99px;font-size:.75rem;font-weight:700;background:rgba(52,211,153,.12);color:var(--ok)}
+.bar{height:10px;background:rgba(255,255,255,.06);border-radius:99px;overflow:hidden;margin:10px 0 4px}
+.bar>i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#a78bfa,#7c3aed);width:${pct}%}
+.subbox{display:flex;gap:8px;margin-top:10px}
+.subbox input{flex:1;padding:11px 12px;background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:12px;color:var(--txt);font:400 .78rem monospace;direction:ltr;text-align:left}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:11px 16px;border:none;border-radius:12px;font:700 .86rem Vazirmatn;cursor:pointer;background:linear-gradient(135deg,#a78bfa,#7c3aed);color:#fff;box-shadow:0 6px 20px rgba(139,92,246,.35)}
+.btn:active{transform:scale(.97)}
+.btn-g{background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--mut);box-shadow:none}
+.clients{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.cli{display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 10px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid var(--line);text-decoration:none;color:var(--txt);transition:.2s}
+.cli:hover{border-color:var(--p);background:rgba(139,92,246,.08)}
+.cli svg{width:36px;height:36px}
+.cli span{font-size:.78rem;font-weight:700;text-align:center}
+.cli small{font-size:.65rem;color:var(--mut)}
+.steps{counter-reset:s}
+.steps li{list-style:none;position:relative;padding:10px 12px 10px 44px;margin-bottom:8px;background:rgba(255,255,255,.03);border-radius:12px;font-size:.84rem;color:var(--mut)}
+.steps li::before{counter-increment:s;content:counter(s);position:absolute;right:12px;top:50%;transform:translateY(-50%);width:24px;height:24px;border-radius:8px;background:rgba(139,92,246,.2);color:#c4b5fd;font-weight:800;font-size:.75rem;display:grid;place-items:center}
+.qr{text-align:center;margin-top:12px}
+.qr img{width:160px;height:160px;border-radius:12px;background:#fff;padding:8px}
+.foot{text-align:center;margin-top:20px;color:var(--mut);font-size:.75rem}
+</style></head><body><div class="wrap">
+<div class="brand">
+  <div class="logo">L</div>
+  <h1>${title}</h1>
+  <p>پنل کاربری · ${user.username}</p>
+</div>
+
+<div class="card">
+  <div class="row"><span class="l">وضعیت</span><span class="badge" style="background:${statusClr}22;color:${statusClr}">${statusTxt}</span></div>
+  <div class="row"><span class="l">حجم مصرف‌شده</span><span class="v">${uv.used}</span></div>
+  <div class="row"><span class="l">سقف حجم</span><span class="v">${lim > 0 ? lim + " Gig" : "∞"}</span></div>
+  <div class="row"><span class="l">باقی‌مانده</span><span class="v">${uv.remain}</span></div>
+  ${lim > 0 ? `<div class="bar"><i></i></div><div class="row"><span class="l">پیشرفت</span><span class="v">${pct}%</span></div>` : ""}
+  <div class="row" style="margin-top:8px"><span class="l">روز باقی‌مانده</span><span class="v">${uv.expiry}</span></div>
+</div>
+
+<div class="card">
+  <h3>لینک اشتراک</h3>
+  <div class="subbox">
+    <input id="sub" readonly value="${subUrl}" onclick="this.select()">
+    <button class="btn" onclick="copySub()">کپی</button>
+  </div>
+  <div class="qr"><img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(subUrl)}" alt="QR" width="160" height="160"></div>
+</div>
+
+<div class="card">
+  <h3>دانلود کلاینت</h3>
+  <div class="clients">
+    <a class="cli" href="https://github.com/2dust/v2rayNG/releases" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#3DDC84"/><path d="M7 8h10v2H7V8zm0 3h10v2H7v-2zm0 3h7v2H7v-2z" fill="#fff"/></svg>
+      <span>v2rayNG</span><small>اندروید</small>
+    </a>
+    <a class="cli" href="https://apps.apple.com/app/streisand/id6450534064" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#007AFF"/><path d="M12 6c.8 0 1.5.3 2 .9.5-.4 1.2-.7 2-.7 1.5 0 2.7 1.2 2.7 2.7 0 2.3-2.1 4.2-5.2 7.1L12 17.5l-1.5-1.5C7.4 12.9 5.3 11 5.3 8.9 5.3 7.4 6.5 6.2 8 6.2c.8 0 1.5.3 2 .7.5-.6 1.2-.9 2-.9z" fill="#fff"/></svg>
+      <span>Streisand</span><small>آیفون</small>
+    </a>
+    <a class="cli" href="https://github.com/2dust/v2rayN/releases" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#0078D4"/><path d="M4 7l8-3 8 3v5c0 4.5-3.2 8.2-8 9.5C7.2 20.2 4 16.5 4 12V7z" fill="#fff" opacity=".9"/></svg>
+      <span>v2rayN</span><small>ویندوز</small>
+    </a>
+    <a class="cli" href="https://github.com/hiddify/hiddify-next/releases" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#6366f1"/><circle cx="12" cy="12" r="5" stroke="#fff" stroke-width="2"/><path d="M12 7v5l3 2" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>Hiddify</span><small>همه پلتفرم</small>
+    </a>
+    <a class="cli" href="https://github.com/MatsuriDayo/NekoBoxForAndroid/releases" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#f59e0b"/><path d="M8 9h8v6H8z" fill="#fff"/><circle cx="10" cy="12" r="1" fill="#f59e0b"/><circle cx="14" cy="12" r="1" fill="#f59e0b"/></svg>
+      <span>NekoBox</span><small>اندروید</small>
+    </a>
+    <a class="cli" href="https://apps.apple.com/app/shadowrocket/id932747118" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none"><rect width="24" height="24" rx="6" fill="#1c1c1e"/><path d="M12 5l7 14H5L12 5z" fill="#fff"/></svg>
+      <span>Shadowrocket</span><small>آیفون</small>
+    </a>
+  </div>
+</div>
+
+<div class="card">
+  <h3>آموزش اتصال</h3>
+  <ol class="steps">
+    <li>یکی از کلاینت‌های بالا را دانلود و نصب کنید</li>
+    <li>لینک اشتراک را کپی کنید</li>
+    <li>در کلاینت گزینه <b>Import from clipboard</b> یا «از کلیپ‌بورد» را بزنید</li>
+    <li>پروفایل را انتخاب و اتصال را فعال کنید</li>
+    <li>در صورت مشکل یوتیوب/اینستا، DNS را روی <code>1.1.1.1</code> یا FakeDNS بگذارید</li>
+  </ol>
+</div>
+
+<div class="foot">Leviko Panel · کاربر ${user.username}</div>
+</div>
+<script>
+function copySub(){
+  var el=document.getElementById('sub');
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(el.value).then(function(){alert('کپی شد');}).catch(function(){el.select();document.execCommand('copy');alert('کپی شد');});
+  } else { el.select(); document.execCommand('copy'); alert('کپی شد'); }
+}
+</script>
+</body></html>`;
+}
+
 function camouflage() {
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title></title>
 <style>body{margin:0;min-height:100vh;background:#07070c}</style></head><body></body></html>`;
@@ -1449,7 +1731,32 @@ export default {
 
     if (path === ROOT || path === ROOT + "/") {
       if (url.searchParams.has("sub")) return handleSub(url, env);
-      return new Response("Leviko · /8080?sub=USERNAME", { headers: { "Content-Type": "text/plain" } });
+      if (url.searchParams.has("u") || url.searchParams.has("status")) {
+        const name = (url.searchParams.get("u") || url.searchParams.get("status") || "").trim();
+        if (name) {
+          const user = await env.DB.prepare("SELECT * FROM users WHERE username=? COLLATE NOCASE OR uuid=?")
+            .bind(name, name).first();
+          if (user) {
+            const c = await cfg(env.DB);
+            return html(statusPage(user, c, url.origin));
+          }
+          return new Response("User not found", { status: 404 });
+        }
+      }
+      return new Response("Leviko · /8080?sub=USERNAME  ·  /8080?u=USERNAME", { headers: { "Content-Type": "text/plain" } });
+    }
+
+    // /8080/status/USERNAME or /status/USERNAME
+    const statusMatch = path.match(/^(?:\/8080)?\/status\/([^/]+)\/?$/);
+    if (statusMatch) {
+      const name = decodeURIComponent(statusMatch[1]);
+      const user = await env.DB.prepare("SELECT * FROM users WHERE username=? COLLATE NOCASE OR uuid=?")
+        .bind(name, name).first();
+      if (user) {
+        const c = await cfg(env.DB);
+        return html(statusPage(user, c, url.origin));
+      }
+      return new Response("User not found", { status: 404 });
     }
 
     if (path === DASH || path === DASH + "/") {
