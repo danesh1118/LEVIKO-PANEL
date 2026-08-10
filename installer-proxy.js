@@ -1,61 +1,113 @@
+/**
+ * Leviko Installer Proxy
+ * CORS proxy for Cloudflare API — used only by the web installer.
+ * Deploy this as a separate Worker on your own account.
+ *
+ * Allowed paths only:
+ *  - /accounts
+ *  - /accounts/{id}
+ *  - /accounts/{id}/d1/database*
+ *  - /accounts/{id}/workers/scripts*
+ *  - /accounts/{id}/workers/services*
+ *  - /accounts/{id}/workers/subdomain
+ *  - /github  (fetch worker source)
+ *  - /health
+ */
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Proxy-Target, X-GitHub-Url',
   'Access-Control-Max-Age': '86400',
 };
-const j = (d, s = 200) =>
-  new Response(JSON.stringify(d), { status: s, headers: { 'Content-Type': 'application/json', ...CORS } });
 
-function ok(p) {
-  if (p === '/accounts' || p === '/accounts/') return true;
-  if (!p.startsWith('/accounts/')) return false;
+const json = (data, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json; charset=utf-8', ...CORS },
+  });
+
+function isAllowed(path) {
+  if (path === '/accounts' || path === '/accounts/') return true;
+  if (!path.startsWith('/accounts/')) return false;
   return [
-    /^\/accounts\/[^/]+\/d1\/database/,
-    /^\/accounts\/[^/]+\/workers\/scripts\//,
-    /^\/accounts\/[^/]+\/workers\/scripts\/[^/]+\/subdomain$/,
-    /^\/accounts\/[^/]+\/workers\/subdomain$/,
-    /^\/accounts\/[^/]+$/,
-  ].some((r) => r.test(p));
+    /^\/accounts\/[^/]+$/,                                    // account details
+    /^\/accounts\/[^/]+\/d1\/database/,                        // D1 list/create
+    /^\/accounts\/[^/]+\/workers\/scripts/,                    // deploy + settings + subdomain
+    /^\/accounts\/[^/]+\/workers\/services/,                   // hosts / real URL
+    /^\/accounts\/[^/]+\/workers\/subdomain$/,                 // account workers.dev subdomain
+  ].some((re) => re.test(path));
 }
 
 export default {
-  async fetch(req) {
-    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
-    const u = new URL(req.url);
-    if (u.pathname === '/health') return j({ ok: true, service: 'leviko-proxy' });
-    if (u.pathname === '/github') {
-      const t = req.headers.get('X-GitHub-Url');
-      if (!t) return j({ error: 'no url' }, 400);
-      if (
-        !t.startsWith('https://raw.githubusercontent.com/') &&
-        !t.startsWith('https://cdn.jsdelivr.net/') &&
-        !t.startsWith('https://api.github.com/')
-      )
-        return j({ error: 'blocked' }, 403);
-      const r = await fetch(t);
-      return new Response(await r.text(), {
-        status: r.status,
-        headers: { 'Content-Type': 'application/javascript', ...CORS },
+  async fetch(request) {
+    // Preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS });
+    }
+
+    const url = new URL(request.url);
+
+    // Health check
+    if (url.pathname === '/health') {
+      return json({ ok: true, service: 'leviko-installer-proxy', version: '1.0.0' });
+    }
+
+    // Fetch worker source from GitHub / jsDelivr
+    if (url.pathname === '/github') {
+      const target = request.headers.get('X-GitHub-Url') || '';
+      const allowed =
+        target.startsWith('https://raw.githubusercontent.com/') ||
+        target.startsWith('https://cdn.jsdelivr.net/') ||
+        target.startsWith('https://api.github.com/');
+      if (!allowed) return json({ error: 'url blocked' }, 403);
+
+      const res = await fetch(target, {
+        headers: { 'User-Agent': 'Leviko-Installer-Proxy' },
+      });
+      const body = await res.text();
+      return new Response(body, {
+        status: res.status,
+        headers: {
+          'Content-Type': res.headers.get('Content-Type') || 'application/javascript',
+          ...CORS,
+        },
       });
     }
-    const auth = req.headers.get('Authorization');
-    if (!auth) return j({ error: 'no auth' }, 401);
-    const target = req.headers.get('X-Proxy-Target');
-    if (!target || !ok(target)) return j({ error: 'path denied' }, 403);
-    const opts = { method: req.method, headers: { Authorization: auth } };
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      const ct = req.headers.get('Content-Type') || '';
-      if (ct.includes('multipart/form-data')) opts.body = await req.formData();
-      else {
-        opts.body = await req.text();
+
+    // Cloudflare API proxy
+    const auth = request.headers.get('Authorization');
+    if (!auth) return json({ error: 'missing Authorization' }, 401);
+
+    const target = request.headers.get('X-Proxy-Target');
+    if (!target || !isAllowed(target)) {
+      return json({ error: 'path denied', path: target || null }, 403);
+    }
+
+    const opts = {
+      method: request.method,
+      headers: { Authorization: auth },
+    };
+
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      const ct = request.headers.get('Content-Type') || '';
+      if (ct.includes('multipart/form-data')) {
+        opts.body = await request.formData();
+      } else {
+        opts.body = await request.text();
         opts.headers['Content-Type'] = 'application/json';
       }
     }
-    const r = await fetch('https://api.cloudflare.com/client/v4' + target, opts);
-    return new Response(await r.text(), {
-      status: r.status,
-      headers: { 'Content-Type': 'application/json', ...CORS },
+
+    const cfRes = await fetch('https://api.cloudflare.com/client/v4' + target, opts);
+    const text = await cfRes.text();
+
+    return new Response(text, {
+      status: cfRes.status,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        ...CORS,
+      },
     });
   },
 };
