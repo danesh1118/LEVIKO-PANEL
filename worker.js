@@ -5,7 +5,7 @@
  */
 import { connect } from "cloudflare:sockets";
 
-const V = "3.0.0";
+const V = "1.0.0";
 const ROOT = "/8080";
 const DASH = "/8080/dash";
 const WS = "/lv";
@@ -187,7 +187,13 @@ async function cfg(db) {
   return {
     protocol: (await Store.get(db, "protocol", "vless")) || "vless",
     ports: (await Store.get(db, "ports", "443")) || "443",
-    clean_ips: (await Store.get(db, "clean_ips", "🇩🇪 Germany|www.speedtest.com")) || "🇩🇪 Germany|www.speedtest.com",
+    clean_ips: (await Store.get(db, "clean_ips", `188.114.99.0#🇩🇪 Germany
+grok.com#🇺🇸 USA
+www.speedtest.net#🇦🇿 Azerbaijan
+chatgpt.com#🇨🇦 Canada`)) || `188.114.99.0#🇩🇪 Germany
+grok.com#🇺🇸 USA
+www.speedtest.net#🇦🇿 Azerbaijan
+chatgpt.com#🇨🇦 Canada`,
     upstream: (await Store.get(db, "upstream", "")) || "",
     sub_prefix: (await Store.get(db, "sub_prefix", "Leviko")) || "Leviko",
     fingerprint: (await Store.get(db, "fingerprint", "chrome")) || "chrome",
