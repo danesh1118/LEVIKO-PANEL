@@ -182,12 +182,12 @@ async function cfg(db) {
   // default info rows if empty and legacy flag on
   const legacyInfo = (await Store.get(db, "info_cfg", "1")) !== "0";
   if (!info_entries.length && legacyInfo) {
-    info_entries = ["📊 {used} / {remain}", "⏳ {expiry}"];
+    info_entries = ["📊 {remain} ⏳ {expiry}"];
   }
   return {
     protocol: (await Store.get(db, "protocol", "vless")) || "vless",
     ports: (await Store.get(db, "ports", "443")) || "443",
-    clean_ips: (await Store.get(db, "clean_ips", "www.speedtest.net")) || "www.speedtest.net",
+    clean_ips: (await Store.get(db, "clean_ips", "🇩🇪 Germany|www.speedtest.com")) || "🇩🇪 Germany|www.speedtest.com",
     upstream: (await Store.get(db, "upstream", "")) || "",
     sub_prefix: (await Store.get(db, "sub_prefix", "Leviko")) || "Leviko",
     fingerprint: (await Store.get(db, "fingerprint", "chrome")) || "chrome",
