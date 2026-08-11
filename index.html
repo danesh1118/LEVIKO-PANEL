@@ -185,23 +185,79 @@ async function deploy(){
 }
 
 async function getAccountWorkersSubdomain(){
- const r=await cf(`/accounts/${S.accountId}/workers/subdomain`);
+ const path=`/accounts/${S.accountId}/workers/subdomain`;
+
+ // First use the configured connection (proxy or direct).
+ let r=await cf(path);
+
+ // Important: older Leviko/Nahan proxies may not whitelist the
+ // account-level workers/subdomain endpoint. If that happens, bypass
+ // the proxy for this single read and call Cloudflare directly.
+ if(!r.success || typeof r.result?.subdomain!=='string'){
+   try{
+     const res=await fetch(CF+path,{
+       method:'GET',
+       headers:{'Authorization':'Bearer '+S.token}
+     });
+     const text=await res.text();
+     try{r=JSON.parse(text)}
+     catch{r={success:false,errors:[{message:text.slice(0,300)||('HTTP '+res.status)}]}}
+   }catch(e){
+     r={success:false,errors:[{message:e.message||String(e)}]};
+   }
+ }
+
  if(r.success&&typeof r.result?.subdomain==='string'){
    const sub=r.result.subdomain.trim().toLowerCase();
-   if(/^[a-z0-9-]+$/.test(sub)){S.subdomain=sub;return sub;}
+   if(/^[a-z0-9-]+$/.test(sub)){
+     S.subdomain=sub;
+     return sub;
+   }
  }
+
  return '';
 }
 
+async function verifyWorkerSubdomain(){
+ const path=`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}/subdomain`;
+ let r=await cf(path);
+
+ if(!r.success){
+   try{
+     const res=await fetch(CF+path,{
+       method:'GET',
+       headers:{'Authorization':'Bearer '+S.token}
+     });
+     const text=await res.text();
+     try{r=JSON.parse(text)}
+     catch{r={success:false,errors:[{message:text.slice(0,300)||('HTTP '+res.status)}]}}
+   }catch(e){
+     r={success:false,errors:[{message:e.message||String(e)}]};
+   }
+ }
+
+ return !!(r.success && r.result?.enabled===true);
+}
+
 async function resolveUrl(){
- log('در حال دریافت workers.dev اکانت…','warn');
+ log('در حال بررسی workers.dev اکانت…','warn');
+
+ // The Worker may already be live even if the previous installer
+ // reported an error. Confirm the Worker subdomain state first.
+ const workerEnabled=await verifyWorkerSubdomain();
+ if(workerEnabled) log('worker workers.dev · فعال','ok');
+
  let sub='';
- for(let i=0;i<6;i++){
+ for(let i=0;i<8;i++){
    sub=await getAccountWorkersSubdomain();
    if(sub)break;
    await new Promise(r=>setTimeout(r,1000));
  }
- if(!sub)throw new Error('Cloudflare ساب‌دامین workers.dev اکانت را برنگرداند. نصب متوقف شد تا لینک ناقص ساخته نشود.');
+
+ if(!sub){
+   throw new Error('Worker ساخته شد اما نام اصلی workers.dev اکانت از Cloudflare دریافت نشد. لینک ناقص ساخته نشد.');
+ }
+
  S.url=`https://${S.workerName}.${sub}.workers.dev`;
  log('workers.dev · '+S.url,'ok');
  return{ok:true};
