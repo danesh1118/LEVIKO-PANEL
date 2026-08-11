@@ -1,5 +1,5 @@
 /**
- * Leviko Panel v3.0.0
+ * Leviko Panel v1.0.0
  * Full panel · VLESS/Trojan · Clean IP · Upstream · Sub info · Telegram shop · D1
  * /8080/dash  ·  /8080?sub=NAME
  */
@@ -186,12 +186,12 @@ async function cfg(db) {
   }
   return {
     protocol: (await Store.get(db, "protocol", "vless")) || "vless",
-    ports: (await Store.get(db, "ports", "443,80")) || "443,80",
-    clean_ips: (await Store.get(db, "clean_ips", "")) || "",
+    ports: (await Store.get(db, "ports", "443")) || "443",
+    clean_ips: (await Store.get(db, "clean_ips", "www.speedtest.net")) || "www.speedtest.net",
     upstream: (await Store.get(db, "upstream", "")) || "",
     sub_prefix: (await Store.get(db, "sub_prefix", "Leviko")) || "Leviko",
     fingerprint: (await Store.get(db, "fingerprint", "chrome")) || "chrome",
-    name_template: (await Store.get(db, "name_template", "{PREFIX} · {USER} · {IP_NAME}")) || "{PREFIX} · {USER} · {IP_NAME}",
+    name_template: (await Store.get(db, "name_template", "{IP_NAME}")) || "{IP_NAME}",
     info_entries,
     info_cfg: legacyInfo,
     kill: (await Store.get(db, "kill_switch", "0")) === "1",
