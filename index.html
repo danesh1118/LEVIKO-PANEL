@@ -149,78 +149,63 @@ async function ensureD1(){
 
 async function deploy(){
  const bindings=[{name:BINDING,type:'d1',id:S.dbId}];
- if(S.adminPass){bindings.push({type:'plain_text',name:'ADMIN_USER',text:S.adminUser||'admin'});bindings.push({type:'plain_text',name:'ADMIN_PASS',text:S.adminPass})}
+ if(S.adminPass){
+   bindings.push({type:'plain_text',name:'ADMIN_USER',text:S.adminUser||'admin'});
+   bindings.push({type:'plain_text',name:'ADMIN_PASS',text:S.adminPass});
+ }
  const metadata={main_module:MODULE,compatibility_date:'2024-11-01',compatibility_flags:['nodejs_compat'],bindings};
- const form=new FormData();form.append('metadata',new Blob([JSON.stringify(metadata)],{type:'application/json'}));form.append(MODULE,new Blob([S.code],{type:'application/javascript+module'}),MODULE);
- const r=await cf(`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}`,{method:'PUT',body:form});
+ const form=new FormData();
+ form.append('metadata',new Blob([JSON.stringify(metadata)],{type:'application/json'}));
+ form.append(MODULE,new Blob([S.code],{type:'application/javascript+module'}),MODULE);
+
+ // Same deployment sequence used by the working Nahan installer:
+ // 1) multipart PUT script
+ // 2) explicit deployment
+ // 3) enable workers.dev through the service/environment endpoint
+ const scriptPath=`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}`;
+ const r=await cf(scriptPath,{method:'PUT',body:form});
  if(!r.success)return{ok:false,msg:(r.errors||[]).map(e=>e.message).join('; ')||'deploy fail'};
- log('worker deployed','ok');return{ok:true};
+ log('worker uploaded','ok');
+
+ const deploymentPath=`${scriptPath}/deployments`;
+ const d=await cf(deploymentPath,{method:'POST',body:JSON.stringify({
+   strategy:'simple',
+   manifest:{[MODULE]:{file:MODULE}}
+ })});
+ if(d.success) log('deployment created','ok');
+ else log('deployment API: '+(d.errors?.[0]?.message||'failed; continuing'),'warn');
+
+ const serviceSubdomainPath=`/accounts/${S.accountId}/workers/services/${encodeURIComponent(S.workerName)}/environments/production/subdomain`;
+ const en=await cf(serviceSubdomainPath,{method:'POST',body:JSON.stringify({enabled:true})});
+ if(!en.success){
+   return{ok:false,msg:'فعال‌سازی workers.dev ناموفق بود: '+(en.errors?.[0]?.message||'Cloudflare API error')};
+ }
+ log('workers.dev route enabled','ok');
+ return{ok:true};
 }
 
-/* FIXED:
-   Cloudflare has two different subdomain endpoints:
-   - /accounts/:id/workers/subdomain => returns the account workers.dev name
-   - /accounts/:id/workers/scripts/:script/subdomain => enables the individual Worker
-   The old installer read the account name once, ignored failures, then guessed
-   worker.workers.dev. This version enables first, re-reads the account name,
-   retries propagation, and NEVER reports success with an incomplete URL.
-*/
 async function getAccountWorkersSubdomain(){
  const r=await cf(`/accounts/${S.accountId}/workers/subdomain`);
  if(r.success&&typeof r.result?.subdomain==='string'){
-   const sub=r.result.subdomain.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
-   if(sub){S.subdomain=sub;return sub}
+   const sub=r.result.subdomain.trim().toLowerCase();
+   if(/^[a-z0-9-]+$/.test(sub)){S.subdomain=sub;return sub;}
  }
  return '';
 }
 
-async function enableWorkerSubdomain(){
- const path=`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}/subdomain`;
- const r=await cf(path,{method:'POST',body:JSON.stringify({enabled:true})});
- if(!r.success)return{ok:false,msg:r.errors?.[0]?.message||'فعال‌سازی workers.dev ناموفق بود'};
- if(r.result?.enabled===false)return{ok:false,msg:'Cloudflare فعال‌سازی workers.dev را تأیید نکرد'};
- return{ok:true};
-}
-
-async function workerHostWorks(host){
- try{
-   const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),7000);
-   const r=await fetch('https://'+host+'/',{method:'GET',cache:'no-store',signal:ctrl.signal});
-   clearTimeout(t);
-   return true; // Any HTTP response means DNS/host is reachable.
- }catch{return false}
-}
-
 async function resolveUrl(){
- log('در حال فعال‌سازی workers.dev…','warn');
- const en=await enableWorkerSubdomain();
- if(!en.ok)throw new Error(en.msg);
-
+ log('در حال دریافت workers.dev اکانت…','warn');
  let sub='';
- for(let i=0;i<8;i++){
+ for(let i=0;i<6;i++){
    sub=await getAccountWorkersSubdomain();
    if(sub)break;
    await new Promise(r=>setTimeout(r,1000));
  }
- if(!sub)throw new Error('Cloudflare نام workers.dev اکانت را برنگرداند. نصب متوقف شد و لینک ناقص ساخته نشد.');
-
- const host=`${S.workerName}.${sub}.workers.dev`;
- log('workers.dev · '+host,'ok');
-
- let reachable=false;
- for(let i=0;i<8;i++){
-   reachable=await workerHostWorks(host);
-   if(reachable)break;
-   log(`انتظار انتشار DNS… ${i+1}/8`,'warn');
-   await new Promise(r=>setTimeout(r,1500));
- }
- if(!reachable)throw new Error('Worker ساخته شد ولی آدرس عمومی هنوز قابل دسترسی نیست. چند لحظه بعد «تلاش مجدد» را بزن.');
-
- S.url='https://'+host;
- log('url · '+S.url,'ok');
+ if(!sub)throw new Error('Cloudflare ساب‌دامین workers.dev اکانت را برنگرداند. نصب متوقف شد تا لینک ناقص ساخته نشود.');
+ S.url=`https://${S.workerName}.${sub}.workers.dev`;
+ log('workers.dev · '+S.url,'ok');
  return{ok:true};
 }
-
 async function bootstrap(){
  if(S.mode==='update'||!S.adminPass)return{ok:true};
  try{
