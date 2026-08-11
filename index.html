@@ -85,9 +85,10 @@ async function cf(path,opts={}){
  const method=opts.method||'GET';
  const headers={'Authorization':'Bearer '+S.token,...(opts.headers||{})};
  if(opts.body&&!(opts.body instanceof FormData))headers['Content-Type']='application/json';
- const base=S.proxy?S.proxy.replace(/\/$/,''):CF;
  try{
-   const res=await fetch(base+path,{method,headers,body:opts.body});
+   const target=S.proxy?S.proxy.replace(/\/$/,'')+path:CF+path;
+   if(S.proxy)headers['X-Proxy-Target']=path;
+   const res=await fetch(target,{method,headers,body:opts.body});
    const text=await res.text();let j;
    try{j=JSON.parse(text)}catch{return{success:false,errors:[{message:text.slice(0,300)||('HTTP '+res.status)}],status:res.status}}
    return j;
@@ -107,10 +108,18 @@ async function initConn(){
 
 async function go2(){
  const tok=document.getElementById('apiToken').value.trim();
- if(!tok||tok.length<20){showErr('e1','توکن را وارد کن');return}
+ if(!tok){showErr('e1','توکن را وارد کن');return}
  S.token=tok;hideErr('e1');
  const r=await cf('/accounts');
- if(!r.success||!r.result?.length){showErr('e1',r.errors?.[0]?.message||'اکانت پیدا نشد');return}
+ if(!r.success){
+   const msg=r.errors?.[0]?.message||'خطا در اعتبارسنجی توکن';
+   showErr('e1',msg+'\n\nاگر خطا مربوط به دسترسی است، توکن باید حداقل Account: Read و Workers Scripts: Edit را داشته باشد.');
+   return;
+ }
+ if(!Array.isArray(r.result)||!r.result.length){
+   showErr('e1','این توکن به هیچ اکانت Cloudflare دسترسی ندارد.');
+   return;
+ }
  S.accounts=r.result;const sel=document.getElementById('accountSel');
  sel.innerHTML=S.accounts.map(a=>`<option value="${a.id}">${String(a.name||a.id).replace(/[<>&"]/g,'')}</option>`).join('');
  S.accountId=S.accounts[0].id;sel.onchange=()=>S.accountId=sel.value;show(2);
