@@ -258,6 +258,9 @@ async function handleVless(request, env, ctx) {
   const [client, server] = Object.values(new WebSocketPair());
   server.accept();
   let remote = null, username = null, headerDone = false, bytesUp = 0, bytesDown = 0;
+  let remoteWriter = null;
+  let writeChain = Promise.resolve();
+  let closed = false;
   let earlyData = null;
   let lastFlush = Date.now();
   try {
@@ -296,16 +299,31 @@ async function handleVless(request, env, ctx) {
   };
   const maybeFlush = () => {
     // flush every ~0.5 MB or every 20s so traffic is not lost if isolate dies
-    if ((bytesUp + bytesDown) > 500000 || Date.now() - lastFlush > 20000) scheduleFlush();
+    if ((bytesUp + bytesDown) > 5 * 1024 * 1024 || Date.now() - lastFlush > 60000) scheduleFlush();
+  };
+
+  const writeRemote = (data) => {
+    if (!remoteWriter || closed || !data?.byteLength) return Promise.resolve(false);
+    const chunk = data instanceof Uint8Array ? data : new Uint8Array(data);
+    writeChain = writeChain.then(async () => {
+      if (closed || !remoteWriter) return false;
+      await remoteWriter.write(chunk);
+      bytesUp += chunk.byteLength;
+      maybeFlush();
+      return true;
+    }).catch(() => {
+      try { server.close(1011); } catch (_) {}
+      return false;
+    });
+    return writeChain;
   };
 
   const pipeRemote = async (host, port, payload, isVless, versionByte) => {
     try {
       remote = connect({ hostname: host, port });
-      const w = remote.writable.getWriter();
-      if (payload?.byteLength) { await w.write(payload); bytesUp += payload.byteLength; }
-      w.releaseLock();
-      if (isVless) server.send(new Uint8Array([versionByte, 0]));
+      remoteWriter = remote.writable.getWriter();
+      if (payload?.byteLength) await writeRemote(payload);
+      if (isVless && server.readyState === 1) server.send(new Uint8Array([versionByte, 0]));
       (async () => {
         try {
           const r = remote.readable.getReader();
@@ -415,15 +433,20 @@ async function handleVless(request, env, ctx) {
     try {
       const data = ev.data instanceof ArrayBuffer ? new Uint8Array(ev.data) : enc.encode(String(ev.data));
       if (!headerDone) { headerDone = true; await processHeader(data); return; }
-      if (remote) {
-        const w = remote.writable.getWriter();
-        await w.write(data); bytesUp += data.byteLength; w.releaseLock();
-        maybeFlush();
+      if (remote && remoteWriter) {
+        await writeRemote(data);
       }
     } catch (_) { try { server.close(); } catch (__) {} }
   });
-  server.addEventListener("close", () => { try { remote?.close?.(); } catch (_) {} scheduleFlush(); });
-  server.addEventListener("error", () => { try { remote?.close?.(); } catch (_) {} scheduleFlush(); });
+  const closeRemote = () => {
+    closed = true;
+    try { remoteWriter?.releaseLock?.(); } catch (_) {}
+    remoteWriter = null;
+    try { remote?.close?.(); } catch (_) {}
+    scheduleFlush();
+  };
+  server.addEventListener("close", closeRemote);
+  server.addEventListener("error", closeRemote);
   if (earlyData?.byteLength) { headerDone = true; await processHeader(earlyData); }
   return new Response(null, { status: 101, webSocket: client });
 }
@@ -2441,7 +2464,8 @@ async function bumpCfReq(env, ctx) {
 
 export default {
   async fetch(request, env, ctx) {
-    if (!env.DB) return new Response("D1 binding 'DB' missing", { status: 500 });
+    try {
+      if (!env.DB) return new Response("D1 binding 'DB' missing", { status: 500 });
     try { await Store.init(env.DB); } catch (_) {}
 
     try {
@@ -2455,9 +2479,6 @@ export default {
         }
       }
     } catch (_) {}
-
-    // count worker invocations (approx CF requests)
-    bumpCfReq(env, ctx);
 
     const url = new URL(request.url);
     const path = url.pathname;
@@ -2506,5 +2527,14 @@ export default {
     }
 
     return html(camouflage());
+    } catch (err) {
+      try {
+        await Store.log(env.DB, "worker_error", err?.message || String(err));
+      } catch (_) {}
+      return new Response("Leviko Worker Error", {
+        status: 500,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }
+      });
+    }
   },
 };
