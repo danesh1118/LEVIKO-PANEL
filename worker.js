@@ -188,12 +188,9 @@ async function cfg(db) {
     protocol: (await Store.get(db, "protocol", "vless")) || "vless",
     ports: (await Store.get(db, "ports", "443")) || "443",
     clean_ips: (await Store.get(db, "clean_ips", "")) || "",
-    proxy_ips: (await Store.get(db, "proxy_ips", "")) || "",
     upstream: (await Store.get(db, "upstream", "")) || "",
     sub_prefix: (await Store.get(db, "sub_prefix", "Leviko")) || "Leviko",
     fingerprint: (await Store.get(db, "fingerprint", "chrome")) || "chrome",
-    alpn: (await Store.get(db, "alpn", "http/1.1")) || "http/1.1",
-    ws_path_mode: (await Store.get(db, "ws_path_mode", "random")) || "random",
     name_template: (await Store.get(db, "name_template", "{IP_NAME}")) || "{IP_NAME}",
     info_entries,
     info_cfg: legacyInfo,
@@ -259,22 +256,13 @@ async function handleVless(request, env, ctx) {
   } catch (_) {}
 
   const [client, server] = Object.values(new WebSocketPair());
-  // allowHalfOpen helps proxy close coordination on newer CF runtimes
-  try { server.accept({ allowHalfOpen: true }); } catch (_) { server.accept(); }
-
+  server.accept();
   let remote = null, username = null, headerDone = false, bytesUp = 0, bytesDown = 0;
   let remoteWriter = null;
   let writeChain = Promise.resolve();
   let closed = false;
   let earlyData = null;
   let lastFlush = Date.now();
-  let proxyIpList = [];
-
-  try {
-    const rawProxy = (await Store.get(env.DB, "proxy_ips", "")) || "";
-    proxyIpList = rawProxy.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
-  } catch (_) {}
-
   try {
     const ed = new URL(request.url).searchParams.get("ed");
     if (ed) {
@@ -282,6 +270,7 @@ async function handleVless(request, env, ctx) {
       earlyData = Uint8Array.from(raw, (c) => c.charCodeAt(0));
     }
   } catch (_) {}
+  // Trojan early data can also arrive via sec-websocket-protocol
   try {
     if (!earlyData) {
       const swp = request.headers.get("sec-websocket-protocol") || "";
@@ -309,17 +298,8 @@ async function handleVless(request, env, ctx) {
     else flush();
   };
   const maybeFlush = () => {
-    if ((bytesUp + bytesDown) > 2 * 1024 * 1024 || Date.now() - lastFlush > 30000) scheduleFlush();
-  };
-
-  const safeClose = (code) => {
-    if (closed) return;
-    closed = true;
-    try { if (server.readyState === 1 || server.readyState === 0) server.close(code || 1000); } catch (_) {}
-    try { remoteWriter?.releaseLock?.(); } catch (_) {}
-    remoteWriter = null;
-    try { remote?.close?.(); } catch (_) {}
-    scheduleFlush();
+    // flush every ~0.5 MB or every 20s so traffic is not lost if isolate dies
+    if ((bytesUp + bytesDown) > 5 * 1024 * 1024 || Date.now() - lastFlush > 60000) scheduleFlush();
   };
 
   const writeRemote = (data) => {
@@ -332,99 +312,37 @@ async function handleVless(request, env, ctx) {
       maybeFlush();
       return true;
     }).catch(() => {
-      safeClose(1011);
+      try { server.close(1011); } catch (_) {}
       return false;
     });
     return writeChain;
   };
 
-  /**
-   * BPB-style outbound:
-   * - If proxy_ips is set, prefer connecting via those hosts (CF preferred / clean egress).
-   * - Otherwise direct to destination.
-   * Order: first listed proxy, then direct, then other proxies.
-   */
-  const resolveTargets = (host, port) => {
-    const list = [];
-    const add = (h, p) => {
-      if (!h) return;
-      list.push({ hostname: h, port: p || port });
-    };
-    for (const p of proxyIpList.slice(0, 6)) {
-      let ph = p.trim(), pp = port;
-      if (!ph) continue;
-      if (ph.startsWith("[")) {
-        const m = ph.match(/^\[([^\]]+)\]:(\d+)$/);
-        if (m) { ph = m[1]; pp = parseInt(m[2], 10) || port; }
-        else ph = ph.replace(/^\[|\]$/g, "");
-      } else if (/^\d+\.\d+\.\d+\.\d+:\d+$/.test(ph)) {
-        const idx = ph.lastIndexOf(":");
-        pp = parseInt(ph.slice(idx + 1), 10) || port;
-        ph = ph.slice(0, idx);
-      } else if (ph.includes(":") && !/^\d+\.\d+\.\d+\.\d+$/.test(ph) && ph.split(":").length === 2) {
-        const [a, b] = ph.split(":");
-        if (/^\d+$/.test(b)) { ph = a; pp = parseInt(b, 10) || port; }
-      }
-      add(ph, pp);
-    }
-    add(host, port);
-    // unique
-    const seen = new Set();
-    return list.filter((t) => {
-      const k = t.hostname + ":" + t.port;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-  };
-
   const pipeRemote = async (host, port, payload, isVless, versionByte) => {
-    const targets = resolveTargets(host, port);
-    let lastErr = null;
-    for (const t of targets) {
-      try {
-        const sock = connect({ hostname: t.hostname, port: t.port });
-        const writer = sock.writable.getWriter();
-        remote = sock;
-        remoteWriter = writer;
-
-        // VLESS: version + 0 (success) — send immediately so client can proceed
-        if (isVless && server.readyState === 1) {
-          try { server.send(new Uint8Array([versionByte || 0, 0])); } catch (_) {}
-        }
-        if (payload?.byteLength) {
-          await writer.write(payload instanceof Uint8Array ? payload : new Uint8Array(payload));
-          bytesUp += payload.byteLength;
-        }
-
-        (async () => {
-          try {
-            const reader = sock.readable.getReader();
-            while (!closed) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              if (!value?.byteLength) continue;
-              if (server.readyState !== 1) break;
+    try {
+      remote = connect({ hostname: host, port });
+      remoteWriter = remote.writable.getWriter();
+      if (payload?.byteLength) await writeRemote(payload);
+      if (isVless && server.readyState === 1) server.send(new Uint8Array([versionByte, 0]));
+      (async () => {
+        try {
+          const r = remote.readable.getReader();
+          while (true) {
+            const { done, value } = await r.read();
+            if (done) break;
+            if (value?.byteLength) {
               bytesDown += value.byteLength;
-              try { server.send(value); } catch (_) { break; }
+              if (server.readyState === 1) server.send(value);
               maybeFlush();
             }
-          } catch (_) {
-          } finally {
-            safeClose(1000);
           }
-        })();
-        return true;
-      } catch (e) {
-        lastErr = e;
-        try { remoteWriter?.releaseLock?.(); } catch (_) {}
-        try { remote?.close?.(); } catch (_) {}
-        remote = null;
-        remoteWriter = null;
-      }
+        } catch (_) {} finally { try { server.close(); } catch (_) {} scheduleFlush(); }
+      })();
+      return true;
+    } catch (_) {
+      try { server.close(1011); } catch (__) {}
+      return false;
     }
-    safeClose(1011);
-    return false;
   };
 
   const processVless = async (chunk) => {
@@ -433,34 +351,24 @@ async function handleVless(request, env, ctx) {
     let user;
     try { user = await env.DB.prepare("SELECT * FROM users WHERE uuid=?").bind(id).first(); }
     catch (_) { return false; }
-    if (!(await checkUser(env, user))) { safeClose(1008); return false; }
+    if (!(await checkUser(env, user))) { try { server.close(1008); } catch (_) {} return false; }
     username = user.username;
     let offset = 17;
     const u8 = new Uint8Array(chunk);
     if (u8.byteLength <= offset) return true;
-    // addon length
     offset += 1 + u8[offset];
     if (u8.byteLength <= offset + 3) return true;
-    const cmd = u8[offset++]; // 1 = TCP
-    if (cmd !== 1) return false; // only TCP
+    offset += 1;
     const port = (u8[offset] << 8) | u8[offset + 1];
     offset += 2;
     const atyp = u8[offset++];
     let host = "";
     try {
-      if (atyp === 1) {
-        host = `${u8[offset]}.${u8[offset + 1]}.${u8[offset + 2]}.${u8[offset + 3]}`;
-        offset += 4;
-      } else if (atyp === 2) {
-        const len = u8[offset++];
-        host = dec.decode(u8.slice(offset, offset + len));
-        offset += len;
-      } else if (atyp === 3) {
+      if (atyp === 1) { host = `${u8[offset]}.${u8[offset+1]}.${u8[offset+2]}.${u8[offset+3]}`; offset += 4; }
+      else if (atyp === 2) { const len = u8[offset++]; host = dec.decode(u8.slice(offset, offset + len)); offset += len; }
+      else if (atyp === 3) {
         const parts = [];
-        for (let i = 0; i < 8; i++) {
-          parts.push(((u8[offset] << 8) | u8[offset + 1]).toString(16));
-          offset += 2;
-        }
+        for (let i = 0; i < 8; i++) { parts.push(((u8[offset] << 8) | u8[offset+1]).toString(16)); offset += 2; }
         host = parts.join(":");
       } else return false;
     } catch (_) { return false; }
@@ -470,51 +378,46 @@ async function handleVless(request, env, ctx) {
   const processTrojan = async (chunk) => {
     const u8 = new Uint8Array(chunk);
     if (u8.byteLength < 58) return false;
+    // 56 hex chars of sha224(password) + \r\n
     const hashHex = dec.decode(u8.slice(0, 56));
     if (!/^[0-9a-f]{56}$/i.test(hashHex)) return false;
     if (u8[56] !== 0x0d || u8[57] !== 0x0a) return false;
-    // password = uuid string hashed with sha224 in this panel
+    // Find matching user by computing sha224 of each uuid is expensive;
+    // instead: get all active users and match hash (limit scan)
     let user = null;
     try {
-      const rows = await env.DB.prepare("SELECT * FROM users WHERE is_active=1").all();
-      for (const r of (rows?.results || [])) {
-        const h = sha224(String(r.uuid || ""));
-        if (h === hashHex.toLowerCase()) { user = r; break; }
+      const { results } = await env.DB.prepare("SELECT * FROM users WHERE is_active=1 LIMIT 500").all();
+      for (const u of results || []) {
+        if (sha224(u.uuid) === hashHex.toLowerCase()) { user = u; break; }
       }
     } catch (_) { return false; }
-    if (!user || !(await checkUser(env, user))) { safeClose(1008); return false; }
+    if (!(await checkUser(env, user))) { try { server.close(1008); } catch (_) {} return false; }
     username = user.username;
     let offset = 58;
-    if (u8.byteLength <= offset) return true;
-    const cmd = u8[offset++]; // 1 = CONNECT
-    if (cmd !== 1) return false;
+    if (u8.byteLength <= offset + 3) return true;
+    const cmd = u8[offset++]; // 0x01 CONNECT
+    if (cmd !== 0x01) { try { server.close(1002); } catch (_) {} return false; }
     const atyp = u8[offset++];
     let host = "";
     try {
-      if (atyp === 1) {
-        host = `${u8[offset]}.${u8[offset + 1]}.${u8[offset + 2]}.${u8[offset + 3]}`;
-        offset += 4;
-      } else if (atyp === 3) {
-        const len = u8[offset++];
-        host = dec.decode(u8.slice(offset, offset + len));
-        offset += len;
-      } else if (atyp === 4) {
+      if (atyp === 1) { host = `${u8[offset]}.${u8[offset+1]}.${u8[offset+2]}.${u8[offset+3]}`; offset += 4; }
+      else if (atyp === 3) { const len = u8[offset++]; host = dec.decode(u8.slice(offset, offset + len)); offset += len; }
+      else if (atyp === 4) {
         const parts = [];
-        for (let i = 0; i < 8; i++) {
-          parts.push(((u8[offset] << 8) | u8[offset + 1]).toString(16));
-          offset += 2;
-        }
+        for (let i = 0; i < 8; i++) { parts.push(((u8[offset] << 8) | u8[offset+1]).toString(16)); offset += 2; }
         host = parts.join(":");
       } else return false;
     } catch (_) { return false; }
     if (u8.byteLength < offset + 4) return true;
     const port = (u8[offset] << 8) | u8[offset + 1];
     offset += 2;
+    // trailing \r\n
     if (u8[offset] === 0x0d && u8[offset + 1] === 0x0a) offset += 2;
     return pipeRemote(host, port, u8.slice(offset), false, 0);
   };
 
   const processHeader = async (chunk) => {
+    // Detect: VLESS starts with version byte 0/1 + UUID; Trojan starts with 56 hex chars
     const u8 = new Uint8Array(chunk);
     let ok = false;
     if (u8.byteLength >= 17 && (u8[0] === 0 || u8[0] === 1) && parseUUID(chunk)) {
@@ -522,36 +425,29 @@ async function handleVless(request, env, ctx) {
     } else if (u8.byteLength >= 58) {
       ok = await processTrojan(chunk);
     }
-    if (!ok) safeClose(1002);
+    if (!ok) { try { server.close(1002); } catch (_) {} }
     return ok;
   };
 
-  server.addEventListener("message", (ev) => {
-    // fire-and-forget chain to avoid message backlog / disconnect storms
-    writeChain = writeChain.then(async () => {
-      try {
-        const data = ev.data instanceof ArrayBuffer
-          ? new Uint8Array(ev.data)
-          : (ev.data instanceof Uint8Array ? ev.data : enc.encode(String(ev.data)));
-        if (!headerDone) {
-          headerDone = true;
-          await processHeader(data);
-          return;
-        }
-        if (remoteWriter) await writeRemote(data);
-      } catch (_) {
-        safeClose(1011);
+  server.addEventListener("message", async (ev) => {
+    try {
+      const data = ev.data instanceof ArrayBuffer ? new Uint8Array(ev.data) : enc.encode(String(ev.data));
+      if (!headerDone) { headerDone = true; await processHeader(data); return; }
+      if (remote && remoteWriter) {
+        await writeRemote(data);
       }
-    });
+    } catch (_) { try { server.close(); } catch (__) {} }
   });
-  server.addEventListener("close", () => safeClose(1000));
-  server.addEventListener("error", () => safeClose(1011));
-
-  if (earlyData?.byteLength) {
-    headerDone = true;
-    // process early data without blocking the 101 response
-    writeChain = writeChain.then(() => processHeader(earlyData));
-  }
+  const closeRemote = () => {
+    closed = true;
+    try { remoteWriter?.releaseLock?.(); } catch (_) {}
+    remoteWriter = null;
+    try { remote?.close?.(); } catch (_) {}
+    scheduleFlush();
+  };
+  server.addEventListener("close", closeRemote);
+  server.addEventListener("error", closeRemote);
+  if (earlyData?.byteLength) { headerDone = true; await processHeader(earlyData); }
   return new Response(null, { status: 101, webSocket: client });
 }
 
@@ -1674,7 +1570,7 @@ async function handleApi(request, url, env) {
   if (path === "/settings" && method === "POST") {
     const body = await request.json().catch(() => ({}));
     const map = {
-      protocol: "protocol", ports: "ports", clean_ips: "clean_ips", proxy_ips: "proxy_ips", upstream: "upstream", alpn: "alpn",
+      protocol: "protocol", ports: "ports", clean_ips: "clean_ips", upstream: "upstream",
       sub_prefix: "sub_prefix", panel_title: "panel_title", name_template: "name_template", fingerprint: "fingerprint",
       tg_token: "tg_token", tg_admin: "tg_admin", tg_welcome: "tg_welcome", pay_card: "pay_card",
       tg_channel: "tg_channel", tg_support: "tg_support",
@@ -1928,12 +1824,6 @@ tr:hover td{background:rgba(255,255,255,.02)}
       <p style="font-size:.75rem;color:var(--faint);margin-top:8px">آی‌پی را با کاما یا خط جدید جدا کنید. لینک ساب برای همه ترکیب می‌سازد. با پر شدن لیست، کانفیگ Core حذف می‌شود.</p>
       <div class="field" style="margin-top:12px"><label>امضای امنیتی (Fingerprint)</label>
         <select id="fpSel"><option>chrome</option><option>firefox</option><option>safari</option><option>ios</option><option>android</option><option>edge</option><option>random</option></select></div>
-      <div class="field" style="margin-top:12px"><label>ALPN (منطق BPB)</label>
-        <select id="alpnSel"><option value="http/1.1">http/1.1 (پیشنهادی)</option><option value="h2,http/1.1">h2,http/1.1</option><option value="h2">h2</option></select></div>
-      <div class="field" style="margin-top:12px"><label>Proxy IP / Domain (منطق BPB — برای پایداری آپلود و سایت‌ها)</label>
-        <textarea id="proxyIps" rows="3" placeholder="مثلاً یک IP تمیز کلادفلر یا دامنه&#10;141.101.x.x&#10;cdn.example.com" dir="ltr" style="text-align:left"></textarea>
-        <p style="font-size:.75rem;color:var(--faint);margin-top:6px">اگر اتصال مستقیم قطع/ضعیف بود، Worker از این IPها برای خروج استفاده می‌کند (مثل Proxy IP در BPB). خالی = فقط مستقیم.</p>
-      </div>
     </div>
     <div class="glass card-in">
       <h4>🔗 آپ‌استریم</h4>
@@ -2277,8 +2167,6 @@ async function loadSettings() {
   var s = await api('/settings');
   if (!s) return;
   if ($('cleanIps')) $('cleanIps').value = s.clean_ips || '';
-  if ($('proxyIps')) $('proxyIps').value = s.proxy_ips || '';
-  if ($('alpnSel')) $('alpnSel').value = s.alpn || 'http/1.1';
   if ($('fpSel') && s.fingerprint) $('fpSel').value = s.fingerprint;
   previewCleanIps();
   if ($('cleanIps')) $('cleanIps').oninput = previewCleanIps;
@@ -2310,8 +2198,6 @@ async function saveAdv() {
     method: 'POST',
     body: JSON.stringify({
       clean_ips: $('cleanIps') ? $('cleanIps').value : '',
-      proxy_ips: $('proxyIps') ? $('proxyIps').value : '',
-      alpn: $('alpnSel') ? $('alpnSel').value : 'http/1.1',
       upstream: $('upstream') ? $('upstream').value : '',
       protocol: $('protocol') ? $('protocol').value : 'vless',
       ports: $('ports') ? $('ports').value : '443,80',
