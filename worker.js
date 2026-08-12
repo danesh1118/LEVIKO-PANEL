@@ -187,13 +187,7 @@ async function cfg(db) {
   return {
     protocol: (await Store.get(db, "protocol", "vless")) || "vless",
     ports: (await Store.get(db, "ports", "443")) || "443",
-    clean_ips: (await Store.get(db, "clean_ips", `188.114.99.0#🇩🇪 Germany
-grok.com#🇺🇸 USA
-www.speedtest.net#🇦🇿 Azerbaijan
-chatgpt.com#🇨🇦 Canada`)) || `188.114.99.0#🇩🇪 Germany
-grok.com#🇺🇸 USA
-www.speedtest.net#🇦🇿 Azerbaijan
-chatgpt.com#🇨🇦 Canada`,
+    clean_ips: (await Store.get(db, "clean_ips", "")) || "",
     upstream: (await Store.get(db, "upstream", "")) || "",
     sub_prefix: (await Store.get(db, "sub_prefix", "Leviko")) || "Leviko",
     fingerprint: (await Store.get(db, "fingerprint", "chrome")) || "chrome",
