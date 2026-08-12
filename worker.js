@@ -1,11 +1,11 @@
 /**
- * Leviko Panel v1.0.0
+ * Leviko Panel v1.0.1 (BPB-config)
  * Full panel · VLESS/Trojan · Clean IP · Upstream · Sub info · Telegram shop · D1
  * /8080/dash  ·  /8080?sub=NAME
  */
 import { connect } from "cloudflare:sockets";
 
-const V = "1.0.0";
+const V = "1.0.1";
 const ROOT = "/8080";
 const DASH = "/8080/dash";
 const WS = "/lv";
@@ -497,14 +497,40 @@ function infoLineFromTemplate(tpl, user, prefix) {
   return `vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1?encryption=none&security=none&type=ws&path=%2F#${name}`;
 }
 
+
+function randomUpperCase(str) {
+  let result = "";
+  for (let i = 0; i < str.length; i++) {
+    result += Math.random() < 0.5 ? str[i].toUpperCase() : str[i];
+  }
+  return result;
+}
+
+function getRandomString(minLen, maxLen) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const len = Math.floor(Math.random() * (maxLen - minLen + 1)) + minLen;
+  let out = "";
+  for (let i = 0; i < len; i++) out += chars.charAt(Math.floor(Math.random() * chars.length));
+  return out;
+}
+
+/** BPB-style WS path: /tr/xxx or /vl/xxx */
+function generateWsPath(protocol) {
+  const proto = protocol === "trojan" ? "tr" : "vl";
+  return `/${proto}/${getRandomString(16, 32)}`;
+}
+
 function buildUserLinks(host, user, c) {
-  const path = encodeURIComponent(WS);
+  // BPB-Wizard logic: random path /tr|vl/xxx?ed=2560, alpn=http/1.1, randomized SNI
   const ports = (c.ports || "443,80").split(/[,\s]+/).map((p) => parseInt(p, 10)).filter((p) => p > 0 && p < 65536);
   const clean = parseCleanLines(c.clean_ips);
   const protocol = (c.protocol || "vless").toLowerCase();
   const tpl = c.name_template || "{PREFIX} · {USER} · {IP_NAME}";
   const prefix = c.sub_prefix || "Leviko";
   const links = [];
+  const fp = (c.fingerprint || "chrome").trim() || "chrome";
+  // ALPN: BPB uses only http/1.1 (better compatibility / upload on many networks)
+  const alpn = encodeURIComponent((c.alpn || "http/1.1").trim() || "http/1.1");
 
   // custom info entries (display-only)
   const entries = Array.isArray(c.info_entries) ? c.info_entries : [];
@@ -524,28 +550,35 @@ function buildUserLinks(host, user, c) {
       FLAG: "", COUNTRY: "", CITY: "", ISP: "",
     };
     const name = encodeURIComponent(applyTemplate(tpl, vars).replace(/\s·\s$/g, "").replace(/^\s·\s/g, "").trim() || prefix);
-    const fp = c.fingerprint || "chrome";
+    // BPB path: /tr/RANDOM or /vl/RANDOM + early-data
+    const wsPath = generateWsPath(protocol) + "?ed=2560";
+    const pathEnc = encodeURIComponent(wsPath);
+    // BPB: randomize SNI case (helps with DPI fingerprinting)
+    const sni = randomUpperCase(host);
+    // host header stays lowercase domain (or clean IP host override not needed)
+    const hostHeader = host;
+
     if (protocol === "trojan") {
       if (tls) {
-        return `trojan://${user.uuid}@${addr}:${port}?security=tls&sni=${host}&fp=${fp}&alpn=h2%2Chttp%2F1.1&type=ws&host=${host}&path=${path}#${name}`;
+        return `trojan://${user.uuid}@${addr}:${port}?security=tls&sni=${sni}&fp=${fp}&type=ws&host=${hostHeader}&path=${pathEnc}&alpn=${alpn}#${name}`;
       }
-      return `trojan://${user.uuid}@${addr}:${port}?security=none&type=ws&host=${host}&path=${path}#${name}`;
+      return `trojan://${user.uuid}@${addr}:${port}?security=none&type=ws&host=${hostHeader}&path=${pathEnc}#${name}`;
     }
     if (tls) {
-      return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=tls&sni=${host}&fp=${fp}&alpn=h2%2Chttp%2F1.1&type=ws&host=${host}&path=${path}#${name}`;
+      return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=tls&sni=${sni}&fp=${fp}&type=ws&host=${hostHeader}&path=${pathEnc}&alpn=${alpn}#${name}`;
     }
-    return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=none&type=ws&host=${host}&path=${path}#${name}`;
+    return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=none&type=ws&host=${hostHeader}&path=${pathEnc}#${name}`;
   };
 
   if (clean.length) {
     for (const row of clean) {
       for (const port of (ports.length ? ports : [443])) {
-        links.push(make(row.ip, port, port === 443 || port === 8443, row.name));
+        links.push(make(row.ip, port, port === 443 || port === 8443 || port === 2053 || port === 2083 || port === 2087 || port === 2096, row.name));
       }
     }
   } else {
     const mainPort = ports.includes(443) ? 443 : (ports[0] || 443);
-    links.push(make(host, mainPort, mainPort === 443 || mainPort === 8443, "Core"));
+    links.push(make(host, mainPort, mainPort === 443 || mainPort === 8443 || mainPort === 2053 || mainPort === 2083 || mainPort === 2087 || mainPort === 2096, "Core"));
     if (ports.includes(80) && mainPort !== 80) links.push(make(host, 80, false, "Core-80"));
   }
 
