@@ -158,27 +158,24 @@ async function deploy(){
  form.append('metadata',new Blob([JSON.stringify(metadata)],{type:'application/json'}));
  form.append(MODULE,new Blob([S.code],{type:'application/javascript+module'}),MODULE);
 
- // Same deployment sequence used by the working Nahan installer:
- // 1) multipart PUT script
- // 2) explicit deployment
- // 3) enable workers.dev through the service/environment endpoint
+ // Deployment sequence (Cloudflare 2025+ API):
+ // 1) multipart PUT script → creates version + deploys (implicit)
+ // 2) enable workers.dev via service/environment endpoint
  const scriptPath=`/accounts/${S.accountId}/workers/scripts/${encodeURIComponent(S.workerName)}`;
  const r=await cf(scriptPath,{method:'PUT',body:form});
  if(!r.success)return{ok:false,msg:(r.errors||[]).map(e=>e.message).join('; ')||'deploy fail'};
  log('worker uploaded','ok');
-
- const deploymentPath=`${scriptPath}/deployments`;
- const d=await cf(deploymentPath,{method:'POST',body:JSON.stringify({
-   strategy:'simple',
-   manifest:{[MODULE]:{file:MODULE}}
- })});
- if(d.success) log('deployment created','ok');
- else log('deployment API: '+(d.errors?.[0]?.message||'failed; continuing'),'warn');
+ // Note: multipart PUT already creates a version and deploys it.
+ // Do NOT call /deployments with strategy "simple" (removed by Cloudflare; only "percentage" is valid).
 
  const serviceSubdomainPath=`/accounts/${S.accountId}/workers/services/${encodeURIComponent(S.workerName)}/environments/production/subdomain`;
  const en=await cf(serviceSubdomainPath,{method:'POST',body:JSON.stringify({enabled:true})});
  if(!en.success){
-   return{ok:false,msg:'فعال‌سازی workers.dev ناموفق بود: '+(en.errors?.[0]?.message||'Cloudflare API error')};
+   // fallback: try script-level subdomain enable
+   const alt=await cf(`${scriptPath}/subdomain`,{method:'POST',body:JSON.stringify({enabled:true})});
+   if(!alt.success){
+     return{ok:false,msg:'فعال‌سازی workers.dev ناموفق بود: '+(en.errors?.[0]?.message||alt.errors?.[0]?.message||'Cloudflare API error')};
+   }
  }
  log('workers.dev route enabled','ok');
  return{ok:true};
@@ -255,7 +252,7 @@ async function resolveUrl(){
  }
 
  if(!sub){
-   throw new Error('Worker ساخته شد اما نام اصلی workers.dev اکانت از Cloudflare دریافت نشد. لینک ناقص ساخته نشد.');
+   throw new Error('Worker ساخته شد اما subdomain اکانت workers.dev از Cloudflare دریافت نشد. داخل داشبورد Cloudflare برو Workers & Pages → حسابت یک workers.dev subdomain ثبت کن (مثلاً yourname.workers.dev)، بعد دوباره تلاش مجدد بزن.');
  }
 
  S.url=`https://${S.workerName}.${sub}.workers.dev`;
