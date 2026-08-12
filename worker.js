@@ -1,11 +1,11 @@
 /**
- * Leviko Panel v1.0.2
+ * Leviko Panel v1.0.3
  * Full panel · VLESS/Trojan · Clean IP · Upstream · Sub info · Telegram shop · D1
  * /8080/dash  ·  /8080?sub=NAME
  */
 import { connect } from "cloudflare:sockets";
 
-const V = "1.0.2";
+const V = "1.0.3";
 const ROOT = "/8080";
 const DASH = "/8080/dash";
 const WS = "/lv";
@@ -265,10 +265,15 @@ async function handleVless(request, env, ctx) {
   let lastFlush = Date.now();
   let udpDnsWriter = null; // VLESS UDP/DNS mode
   let vlessVersionByte = 0;
+  let headerBuf = null; // accumulate incomplete first packets
 
+  // IMPORTANT: query ?ed=2560 is only a CLIENT hint (early-data size).
+  // It is NOT base64 payload. Decoding "2560" as base64 causes instant disconnect loops.
+  // Real early data arrives via sec-websocket-protocol header (standard for VLESS/Trojan WS).
   try {
     const ed = new URL(request.url).searchParams.get("ed");
-    if (ed) {
+    // only treat as payload if it looks like real base64 early-data (not pure digits)
+    if (ed && !/^\d+$/.test(ed) && ed.length >= 16) {
       const raw = atob(ed.replace(/-/g, "+").replace(/_/g, "/"));
       earlyData = Uint8Array.from(raw, (c) => c.charCodeAt(0));
     }
@@ -277,8 +282,12 @@ async function handleVless(request, env, ctx) {
     if (!earlyData) {
       const swp = request.headers.get("sec-websocket-protocol") || "";
       if (swp) {
-        const raw = atob(swp.replace(/-/g, "+").replace(/_/g, "/"));
-        earlyData = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+        // may be comma-separated values
+        const part = swp.split(",")[0].trim();
+        if (part) {
+          const raw = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
+          earlyData = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+        }
       }
     }
   } catch (_) {}
@@ -510,11 +519,20 @@ async function handleVless(request, env, ctx) {
 
   const processHeader = async (chunk) => {
     const u8 = new Uint8Array(chunk);
+    // too short to decide — wait for more data (do not close)
+    if (u8.byteLength < 18) {
+      headerDone = false;
+      return false;
+    }
     let ok = false;
-    if (u8.byteLength >= 24 && (u8[0] === 0 || u8[0] === 1) && parseUUID(chunk)) {
+    if ((u8[0] === 0 || u8[0] === 1) && u8.byteLength >= 24 && parseUUID(chunk)) {
       ok = await processVless(chunk);
     } else if (u8.byteLength >= 58) {
       ok = await processTrojan(chunk);
+    } else {
+      // incomplete trojan/vless header — wait
+      headerDone = false;
+      return false;
     }
     if (!ok) { try { server.close(1002); } catch (_) {} }
     return ok;
@@ -524,8 +542,22 @@ async function handleVless(request, env, ctx) {
     try {
       const data = ev.data instanceof ArrayBuffer ? new Uint8Array(ev.data) : enc.encode(String(ev.data));
       if (!headerDone) {
+        // accumulate until header can be parsed
+        if (headerBuf && headerBuf.byteLength) {
+          const merged = new Uint8Array(headerBuf.byteLength + data.byteLength);
+          merged.set(headerBuf, 0);
+          merged.set(data, headerBuf.byteLength);
+          headerBuf = merged;
+        } else {
+          headerBuf = data;
+        }
         headerDone = true;
-        await processHeader(data);
+        const ok = await processHeader(headerBuf);
+        if (!headerDone) {
+          // processHeader asked to wait for more
+          return;
+        }
+        if (ok) headerBuf = null;
         return;
       }
       if (udpDnsWriter) {
@@ -551,6 +583,7 @@ async function handleVless(request, env, ctx) {
   server.addEventListener("error", closeRemote);
 
   if (earlyData?.byteLength) {
+    headerBuf = earlyData;
     headerDone = true;
     await processHeader(earlyData);
   }
