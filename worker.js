@@ -1,11 +1,11 @@
 /**
- * Leviko Panel v1.0.3
+ * Leviko Panel v1.0.1 (BPB-config)
  * Full panel · VLESS/Trojan · Clean IP · Upstream · Sub info · Telegram shop · D1
  * /8080/dash  ·  /8080?sub=NAME
  */
 import { connect } from "cloudflare:sockets";
 
-const V = "1.0.3";
+const V = "1.0.1";
 const ROOT = "/8080";
 const DASH = "/8080/dash";
 const WS = "/lv";
@@ -263,31 +263,20 @@ async function handleVless(request, env, ctx) {
   let closed = false;
   let earlyData = null;
   let lastFlush = Date.now();
-  let udpDnsWriter = null; // VLESS UDP/DNS mode
-  let vlessVersionByte = 0;
-  let headerBuf = null; // accumulate incomplete first packets
-
-  // IMPORTANT: query ?ed=2560 is only a CLIENT hint (early-data size).
-  // It is NOT base64 payload. Decoding "2560" as base64 causes instant disconnect loops.
-  // Real early data arrives via sec-websocket-protocol header (standard for VLESS/Trojan WS).
   try {
     const ed = new URL(request.url).searchParams.get("ed");
-    // only treat as payload if it looks like real base64 early-data (not pure digits)
-    if (ed && !/^\d+$/.test(ed) && ed.length >= 16) {
+    if (ed) {
       const raw = atob(ed.replace(/-/g, "+").replace(/_/g, "/"));
       earlyData = Uint8Array.from(raw, (c) => c.charCodeAt(0));
     }
   } catch (_) {}
+  // Trojan early data can also arrive via sec-websocket-protocol
   try {
     if (!earlyData) {
       const swp = request.headers.get("sec-websocket-protocol") || "";
       if (swp) {
-        // may be comma-separated values
-        const part = swp.split(",")[0].trim();
-        if (part) {
-          const raw = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
-          earlyData = Uint8Array.from(raw, (c) => c.charCodeAt(0));
-        }
+        const raw = atob(swp.replace(/-/g, "+").replace(/_/g, "/"));
+        earlyData = Uint8Array.from(raw, (c) => c.charCodeAt(0));
       }
     }
   } catch (_) {}
@@ -309,6 +298,7 @@ async function handleVless(request, env, ctx) {
     else flush();
   };
   const maybeFlush = () => {
+    // flush every ~0.5 MB or every 20s so traffic is not lost if isolate dies
     if ((bytesUp + bytesDown) > 5 * 1024 * 1024 || Date.now() - lastFlush > 60000) scheduleFlush();
   };
 
@@ -328,67 +318,12 @@ async function handleVless(request, env, ctx) {
     return writeChain;
   };
 
-  /** DNS over HTTPS for VLESS UDP port 53 */
-  const startUdpDns = async (versionByte) => {
-    vlessVersionByte = versionByte;
-    let headerSent = false;
-    const pending = [];
-    let processing = false;
-
-    const processChunk = async (chunk) => {
-      const u8 = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
-      let index = 0;
-      while (index + 2 <= u8.byteLength) {
-        const udpLen = (u8[index] << 8) | u8[index + 1];
-        index += 2;
-        if (index + udpLen > u8.byteLength) break;
-        const dnsQuery = u8.slice(index, index + udpLen);
-        index += udpLen;
-        try {
-          const resp = await fetch("https://cloudflare-dns.com/dns-query", {
-            method: "POST",
-            headers: { "content-type": "application/dns-message" },
-            body: dnsQuery,
-          });
-          const dnsResult = new Uint8Array(await resp.arrayBuffer());
-          const sizeBuf = new Uint8Array([(dnsResult.byteLength >> 8) & 0xff, dnsResult.byteLength & 0xff]);
-          if (server.readyState === 1) {
-            if (!headerSent) {
-              server.send(new Uint8Array([versionByte, 0, ...sizeBuf, ...dnsResult]));
-              headerSent = true;
-            } else {
-              server.send(new Uint8Array([...sizeBuf, ...dnsResult]));
-            }
-            bytesDown += dnsResult.byteLength + 2;
-            maybeFlush();
-          }
-        } catch (_) {}
-      }
-    };
-
-    udpDnsWriter = {
-      write: async (chunk) => {
-        pending.push(chunk);
-        if (processing) return;
-        processing = true;
-        while (pending.length) {
-          const c = pending.shift();
-          await processChunk(c);
-        }
-        processing = false;
-      },
-    };
-  };
-
   const pipeRemote = async (host, port, payload, isVless, versionByte) => {
     try {
       remote = connect({ hostname: host, port });
       remoteWriter = remote.writable.getWriter();
       if (payload?.byteLength) await writeRemote(payload);
-      // VLESS TCP response header: version + 0
-      if (isVless && server.readyState === 1) {
-        server.send(new Uint8Array([versionByte, 0]));
-      }
+      if (isVless && server.readyState === 1) server.send(new Uint8Array([versionByte, 0]));
       (async () => {
         try {
           const r = remote.readable.getReader();
@@ -401,10 +336,7 @@ async function handleVless(request, env, ctx) {
               maybeFlush();
             }
           }
-        } catch (_) {} finally {
-          try { server.close(); } catch (_) {}
-          scheduleFlush();
-        }
+        } catch (_) {} finally { try { server.close(); } catch (_) {} scheduleFlush(); }
       })();
       return true;
     } catch (_) {
@@ -414,8 +346,6 @@ async function handleVless(request, env, ctx) {
   };
 
   const processVless = async (chunk) => {
-    const u8 = new Uint8Array(chunk);
-    if (u8.byteLength < 24) return false;
     const id = parseUUID(chunk);
     if (!id) return false;
     let user;
@@ -423,61 +353,37 @@ async function handleVless(request, env, ctx) {
     catch (_) { return false; }
     if (!(await checkUser(env, user))) { try { server.close(1008); } catch (_) {} return false; }
     username = user.username;
-
-    const versionByte = u8[0];
-    const optLength = u8[17];
-    let offset = 18 + optLength;
-    if (u8.byteLength <= offset) return false;
-
-    const command = u8[offset++]; // 1=TCP, 2=UDP
-    if (u8.byteLength < offset + 3) return false;
+    let offset = 17;
+    const u8 = new Uint8Array(chunk);
+    if (u8.byteLength <= offset) return true;
+    offset += 1 + u8[offset];
+    if (u8.byteLength <= offset + 3) return true;
+    offset += 1;
     const port = (u8[offset] << 8) | u8[offset + 1];
     offset += 2;
     const atyp = u8[offset++];
     let host = "";
     try {
-      if (atyp === 1) {
-        host = `${u8[offset]}.${u8[offset + 1]}.${u8[offset + 2]}.${u8[offset + 3]}`;
-        offset += 4;
-      } else if (atyp === 2) {
-        const len = u8[offset++];
-        host = dec.decode(u8.slice(offset, offset + len));
-        offset += len;
-      } else if (atyp === 3) {
+      if (atyp === 1) { host = `${u8[offset]}.${u8[offset+1]}.${u8[offset+2]}.${u8[offset+3]}`; offset += 4; }
+      else if (atyp === 2) { const len = u8[offset++]; host = dec.decode(u8.slice(offset, offset + len)); offset += len; }
+      else if (atyp === 3) {
         const parts = [];
-        for (let i = 0; i < 8; i++) {
-          parts.push(((u8[offset] << 8) | u8[offset + 1]).toString(16));
-          offset += 2;
-        }
+        for (let i = 0; i < 8; i++) { parts.push(((u8[offset] << 8) | u8[offset+1]).toString(16)); offset += 2; }
         host = parts.join(":");
       } else return false;
     } catch (_) { return false; }
-
-    const payload = u8.slice(offset);
-
-    // UDP: only DNS port 53 via DoH
-    if (command === 2) {
-      if (port !== 53) {
-        try { server.close(1002); } catch (_) {}
-        return false;
-      }
-      await startUdpDns(versionByte);
-      if (payload?.byteLength && udpDnsWriter) await udpDnsWriter.write(payload);
-      return true;
-    }
-    if (command !== 1) {
-      try { server.close(1002); } catch (_) {}
-      return false;
-    }
-    return pipeRemote(host, port, payload, true, versionByte);
+    return pipeRemote(host, port, u8.slice(offset), true, chunk[0]);
   };
 
   const processTrojan = async (chunk) => {
     const u8 = new Uint8Array(chunk);
     if (u8.byteLength < 58) return false;
+    // 56 hex chars of sha224(password) + \r\n
     const hashHex = dec.decode(u8.slice(0, 56));
     if (!/^[0-9a-f]{56}$/i.test(hashHex)) return false;
     if (u8[56] !== 0x0d || u8[57] !== 0x0a) return false;
+    // Find matching user by computing sha224 of each uuid is expensive;
+    // instead: get all active users and match hash (limit scan)
     let user = null;
     try {
       const { results } = await env.DB.prepare("SELECT * FROM users WHERE is_active=1 LIMIT 500").all();
@@ -489,50 +395,35 @@ async function handleVless(request, env, ctx) {
     username = user.username;
     let offset = 58;
     if (u8.byteLength <= offset + 3) return true;
-    const cmd = u8[offset++];
+    const cmd = u8[offset++]; // 0x01 CONNECT
     if (cmd !== 0x01) { try { server.close(1002); } catch (_) {} return false; }
     const atyp = u8[offset++];
     let host = "";
     try {
-      if (atyp === 1) {
-        host = `${u8[offset]}.${u8[offset + 1]}.${u8[offset + 2]}.${u8[offset + 3]}`;
-        offset += 4;
-      } else if (atyp === 3) {
-        const len = u8[offset++];
-        host = dec.decode(u8.slice(offset, offset + len));
-        offset += len;
-      } else if (atyp === 4) {
+      if (atyp === 1) { host = `${u8[offset]}.${u8[offset+1]}.${u8[offset+2]}.${u8[offset+3]}`; offset += 4; }
+      else if (atyp === 3) { const len = u8[offset++]; host = dec.decode(u8.slice(offset, offset + len)); offset += len; }
+      else if (atyp === 4) {
         const parts = [];
-        for (let i = 0; i < 8; i++) {
-          parts.push(((u8[offset] << 8) | u8[offset + 1]).toString(16));
-          offset += 2;
-        }
+        for (let i = 0; i < 8; i++) { parts.push(((u8[offset] << 8) | u8[offset+1]).toString(16)); offset += 2; }
         host = parts.join(":");
       } else return false;
     } catch (_) { return false; }
     if (u8.byteLength < offset + 4) return true;
     const port = (u8[offset] << 8) | u8[offset + 1];
     offset += 2;
+    // trailing \r\n
     if (u8[offset] === 0x0d && u8[offset + 1] === 0x0a) offset += 2;
     return pipeRemote(host, port, u8.slice(offset), false, 0);
   };
 
   const processHeader = async (chunk) => {
+    // Detect: VLESS starts with version byte 0/1 + UUID; Trojan starts with 56 hex chars
     const u8 = new Uint8Array(chunk);
-    // too short to decide — wait for more data (do not close)
-    if (u8.byteLength < 18) {
-      headerDone = false;
-      return false;
-    }
     let ok = false;
-    if ((u8[0] === 0 || u8[0] === 1) && u8.byteLength >= 24 && parseUUID(chunk)) {
+    if (u8.byteLength >= 17 && (u8[0] === 0 || u8[0] === 1) && parseUUID(chunk)) {
       ok = await processVless(chunk);
     } else if (u8.byteLength >= 58) {
       ok = await processTrojan(chunk);
-    } else {
-      // incomplete trojan/vless header — wait
-      headerDone = false;
-      return false;
     }
     if (!ok) { try { server.close(1002); } catch (_) {} }
     return ok;
@@ -541,37 +432,12 @@ async function handleVless(request, env, ctx) {
   server.addEventListener("message", async (ev) => {
     try {
       const data = ev.data instanceof ArrayBuffer ? new Uint8Array(ev.data) : enc.encode(String(ev.data));
-      if (!headerDone) {
-        // accumulate until header can be parsed
-        if (headerBuf && headerBuf.byteLength) {
-          const merged = new Uint8Array(headerBuf.byteLength + data.byteLength);
-          merged.set(headerBuf, 0);
-          merged.set(data, headerBuf.byteLength);
-          headerBuf = merged;
-        } else {
-          headerBuf = data;
-        }
-        headerDone = true;
-        const ok = await processHeader(headerBuf);
-        if (!headerDone) {
-          // processHeader asked to wait for more
-          return;
-        }
-        if (ok) headerBuf = null;
-        return;
-      }
-      if (udpDnsWriter) {
-        await udpDnsWriter.write(data);
-        bytesUp += data.byteLength;
-        maybeFlush();
-        return;
-      }
+      if (!headerDone) { headerDone = true; await processHeader(data); return; }
       if (remote && remoteWriter) {
         await writeRemote(data);
       }
     } catch (_) { try { server.close(); } catch (__) {} }
   });
-
   const closeRemote = () => {
     closed = true;
     try { remoteWriter?.releaseLock?.(); } catch (_) {}
@@ -581,15 +447,9 @@ async function handleVless(request, env, ctx) {
   };
   server.addEventListener("close", closeRemote);
   server.addEventListener("error", closeRemote);
-
-  if (earlyData?.byteLength) {
-    headerBuf = earlyData;
-    headerDone = true;
-    await processHeader(earlyData);
-  }
+  if (earlyData?.byteLength) { headerDone = true; await processHeader(earlyData); }
   return new Response(null, { status: 101, webSocket: client });
 }
-
 
 /* ─── subscription builder ─── */
 function userUsageVars(user) {
@@ -654,14 +514,14 @@ function getRandomString(minLen, maxLen) {
   return out;
 }
 
-/** WS path: /tr/xxx or /vl/xxx */
+/** BPB-style WS path: /tr/xxx or /vl/xxx */
 function generateWsPath(protocol) {
   const proto = protocol === "trojan" ? "tr" : "vl";
   return `/${proto}/${getRandomString(16, 32)}`;
 }
 
 function buildUserLinks(host, user, c) {
-  // Config: random path /tr|vl/xxx?ed=2560, alpn=http/1.1, randomized SNI
+  // BPB-Wizard logic: random path /tr|vl/xxx?ed=2560, alpn=http/1.1, randomized SNI
   const ports = (c.ports || "443,80").split(/[,\s]+/).map((p) => parseInt(p, 10)).filter((p) => p > 0 && p < 65536);
   const clean = parseCleanLines(c.clean_ips);
   const protocol = (c.protocol || "vless").toLowerCase();
@@ -669,7 +529,7 @@ function buildUserLinks(host, user, c) {
   const prefix = c.sub_prefix || "Leviko";
   const links = [];
   const fp = (c.fingerprint || "chrome").trim() || "chrome";
-  // ALPN: http/1.1 for better compatibility
+  // ALPN: BPB uses only http/1.1 (better compatibility / upload on many networks)
   const alpn = encodeURIComponent((c.alpn || "http/1.1").trim() || "http/1.1");
 
   // custom info entries (display-only)
@@ -690,10 +550,10 @@ function buildUserLinks(host, user, c) {
       FLAG: "", COUNTRY: "", CITY: "", ISP: "",
     };
     const name = encodeURIComponent(applyTemplate(tpl, vars).replace(/\s·\s$/g, "").replace(/^\s·\s/g, "").trim() || prefix);
-    // path: /tr|vl/RANDOM + early-data
+    // BPB path: /tr/RANDOM or /vl/RANDOM + early-data
     const wsPath = generateWsPath(protocol) + "?ed=2560";
     const pathEnc = encodeURIComponent(wsPath);
-    // randomize SNI case
+    // BPB: randomize SNI case (helps with DPI fingerprinting)
     const sni = randomUpperCase(host);
     // host header stays lowercase domain (or clean IP host override not needed)
     const hostHeader = host;
