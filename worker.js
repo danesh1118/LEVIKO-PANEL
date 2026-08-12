@@ -251,35 +251,38 @@ async function checkUser(env, user) {
 async function handleVless(request, env, ctx) {
   if ((request.headers.get("Upgrade") || "").toLowerCase() !== "websocket")
     return new Response("Expected WebSocket", { status: 426 });
+
   try {
-    if ((await Store.get(env.DB, "kill_switch")) === "1") return new Response("Paused", { status: 503 });
+    if ((await Store.get(env.DB, "kill_switch")) === "1")
+      return new Response("Paused", { status: 503 });
   } catch (_) {}
 
   const [client, server] = Object.values(new WebSocketPair());
   server.accept();
-  let remote = null, username = null, headerDone = false, bytesUp = 0, bytesDown = 0;
+
+  let remote = null;
   let remoteWriter = null;
-  let writeChain = Promise.resolve();
-  let closed = false;
-  let earlyData = null;
+  let username = null;
+  let bytesUp = 0;
+  let bytesDown = 0;
   let lastFlush = Date.now();
-  try {
-    const ed = new URL(request.url).searchParams.get("ed");
-    if (ed) {
-      const raw = atob(ed.replace(/-/g, "+").replace(/_/g, "/"));
-      earlyData = Uint8Array.from(raw, (c) => c.charCodeAt(0));
-    }
-  } catch (_) {}
-  // Trojan early data can also arrive via sec-websocket-protocol
-  try {
-    if (!earlyData) {
-      const swp = request.headers.get("sec-websocket-protocol") || "";
-      if (swp) {
-        const raw = atob(swp.replace(/-/g, "+").replace(/_/g, "/"));
-        earlyData = Uint8Array.from(raw, (c) => c.charCodeAt(0));
-      }
-    }
-  } catch (_) {}
+  let closed = false;
+  let authenticated = false;
+  let headerBuffer = new Uint8Array(0);
+  let processing = Promise.resolve();
+
+  /*
+   * IMPORTANT:
+   * A WebSocket message is not guaranteed to contain a complete VLESS/Trojan
+   * request. The old implementation treated message #1 as the whole header
+   * and immediately marked headerDone=true. That could discard message #2
+   * while connect()/D1 authentication was still pending, which is especially
+   * visible as periodic disconnects and poor upload.
+   *
+   * This implementation keeps a small header buffer, parses only after the
+   * complete request header is available, then serializes client->TCP writes
+   * in arrival order. No client payload is silently dropped.
+   */
 
   const flush = async () => {
     if (!username || !(bytesUp || bytesDown)) return;
@@ -289,165 +292,356 @@ async function handleVless(request, env, ctx) {
     bytesDown = 0;
     lastFlush = Date.now();
     try {
-      await env.DB.prepare("UPDATE users SET used_gb=used_gb+?, last_active=? WHERE username=?")
-        .bind(add, Date.now(), uname).run();
+      await env.DB.prepare(
+        "UPDATE users SET used_gb=used_gb+?, last_active=? WHERE username=?"
+      ).bind(add, Date.now(), uname).run();
     } catch (_) {}
   };
+
   const scheduleFlush = () => {
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(flush());
-    else flush();
+    else void flush();
   };
+
   const maybeFlush = () => {
-    // flush every ~0.5 MB or every 20s so traffic is not lost if isolate dies
-    if ((bytesUp + bytesDown) > 5 * 1024 * 1024 || Date.now() - lastFlush > 60000) scheduleFlush();
+    if ((bytesUp + bytesDown) >= 5 * 1024 * 1024 || Date.now() - lastFlush >= 60000)
+      scheduleFlush();
   };
 
-  const writeRemote = (data) => {
-    if (!remoteWriter || closed || !data?.byteLength) return Promise.resolve(false);
-    const chunk = data instanceof Uint8Array ? data : new Uint8Array(data);
-    writeChain = writeChain.then(async () => {
-      if (closed || !remoteWriter) return false;
-      await remoteWriter.write(chunk);
-      bytesUp += chunk.byteLength;
-      maybeFlush();
-      return true;
-    }).catch(() => {
-      try { server.close(1011); } catch (_) {}
-      return false;
-    });
-    return writeChain;
-  };
-
-  const pipeRemote = async (host, port, payload, isVless, versionByte) => {
-    try {
-      remote = connect({ hostname: host, port });
-      remoteWriter = remote.writable.getWriter();
-      if (payload?.byteLength) await writeRemote(payload);
-      if (isVless && server.readyState === 1) server.send(new Uint8Array([versionByte, 0]));
-      (async () => {
-        try {
-          const r = remote.readable.getReader();
-          while (true) {
-            const { done, value } = await r.read();
-            if (done) break;
-            if (value?.byteLength) {
-              bytesDown += value.byteLength;
-              if (server.readyState === 1) server.send(value);
-              maybeFlush();
-            }
-          }
-        } catch (_) {} finally { try { server.close(); } catch (_) {} scheduleFlush(); }
-      })();
-      return true;
-    } catch (_) {
-      try { server.close(1011); } catch (__) {}
-      return false;
-    }
-  };
-
-  const processVless = async (chunk) => {
-    const id = parseUUID(chunk);
-    if (!id) return false;
-    let user;
-    try { user = await env.DB.prepare("SELECT * FROM users WHERE uuid=?").bind(id).first(); }
-    catch (_) { return false; }
-    if (!(await checkUser(env, user))) { try { server.close(1008); } catch (_) {} return false; }
-    username = user.username;
-    let offset = 17;
-    const u8 = new Uint8Array(chunk);
-    if (u8.byteLength <= offset) return true;
-    offset += 1 + u8[offset];
-    if (u8.byteLength <= offset + 3) return true;
-    offset += 1;
-    const port = (u8[offset] << 8) | u8[offset + 1];
-    offset += 2;
-    const atyp = u8[offset++];
-    let host = "";
-    try {
-      if (atyp === 1) { host = `${u8[offset]}.${u8[offset+1]}.${u8[offset+2]}.${u8[offset+3]}`; offset += 4; }
-      else if (atyp === 2) { const len = u8[offset++]; host = dec.decode(u8.slice(offset, offset + len)); offset += len; }
-      else if (atyp === 3) {
-        const parts = [];
-        for (let i = 0; i < 8; i++) { parts.push(((u8[offset] << 8) | u8[offset+1]).toString(16)); offset += 2; }
-        host = parts.join(":");
-      } else return false;
-    } catch (_) { return false; }
-    return pipeRemote(host, port, u8.slice(offset), true, chunk[0]);
-  };
-
-  const processTrojan = async (chunk) => {
-    const u8 = new Uint8Array(chunk);
-    if (u8.byteLength < 58) return false;
-    // 56 hex chars of sha224(password) + \r\n
-    const hashHex = dec.decode(u8.slice(0, 56));
-    if (!/^[0-9a-f]{56}$/i.test(hashHex)) return false;
-    if (u8[56] !== 0x0d || u8[57] !== 0x0a) return false;
-    // Find matching user by computing sha224 of each uuid is expensive;
-    // instead: get all active users and match hash (limit scan)
-    let user = null;
-    try {
-      const { results } = await env.DB.prepare("SELECT * FROM users WHERE is_active=1 LIMIT 500").all();
-      for (const u of results || []) {
-        if (sha224(u.uuid) === hashHex.toLowerCase()) { user = u; break; }
-      }
-    } catch (_) { return false; }
-    if (!(await checkUser(env, user))) { try { server.close(1008); } catch (_) {} return false; }
-    username = user.username;
-    let offset = 58;
-    if (u8.byteLength <= offset + 3) return true;
-    const cmd = u8[offset++]; // 0x01 CONNECT
-    if (cmd !== 0x01) { try { server.close(1002); } catch (_) {} return false; }
-    const atyp = u8[offset++];
-    let host = "";
-    try {
-      if (atyp === 1) { host = `${u8[offset]}.${u8[offset+1]}.${u8[offset+2]}.${u8[offset+3]}`; offset += 4; }
-      else if (atyp === 3) { const len = u8[offset++]; host = dec.decode(u8.slice(offset, offset + len)); offset += len; }
-      else if (atyp === 4) {
-        const parts = [];
-        for (let i = 0; i < 8; i++) { parts.push(((u8[offset] << 8) | u8[offset+1]).toString(16)); offset += 2; }
-        host = parts.join(":");
-      } else return false;
-    } catch (_) { return false; }
-    if (u8.byteLength < offset + 4) return true;
-    const port = (u8[offset] << 8) | u8[offset + 1];
-    offset += 2;
-    // trailing \r\n
-    if (u8[offset] === 0x0d && u8[offset + 1] === 0x0a) offset += 2;
-    return pipeRemote(host, port, u8.slice(offset), false, 0);
-  };
-
-  const processHeader = async (chunk) => {
-    // Detect: VLESS starts with version byte 0/1 + UUID; Trojan starts with 56 hex chars
-    const u8 = new Uint8Array(chunk);
-    let ok = false;
-    if (u8.byteLength >= 17 && (u8[0] === 0 || u8[0] === 1) && parseUUID(chunk)) {
-      ok = await processVless(chunk);
-    } else if (u8.byteLength >= 58) {
-      ok = await processTrojan(chunk);
-    }
-    if (!ok) { try { server.close(1002); } catch (_) {} }
-    return ok;
-  };
-
-  server.addEventListener("message", async (ev) => {
-    try {
-      const data = ev.data instanceof ArrayBuffer ? new Uint8Array(ev.data) : enc.encode(String(ev.data));
-      if (!headerDone) { headerDone = true; await processHeader(data); return; }
-      if (remote && remoteWriter) {
-        await writeRemote(data);
-      }
-    } catch (_) { try { server.close(); } catch (__) {} }
-  });
-  const closeRemote = () => {
+  const closeAll = (code = 1000) => {
+    if (closed) return;
     closed = true;
     try { remoteWriter?.releaseLock?.(); } catch (_) {}
     remoteWriter = null;
     try { remote?.close?.(); } catch (_) {}
+    try {
+      if (server.readyState === 1 || server.readyState === 0) server.close(code);
+    } catch (_) {}
     scheduleFlush();
   };
-  server.addEventListener("close", closeRemote);
-  server.addEventListener("error", closeRemote);
-  if (earlyData?.byteLength) { headerDone = true; await processHeader(earlyData); }
+
+  const appendBytes = (a, b) => {
+    if (!a?.byteLength) return b instanceof Uint8Array ? b : new Uint8Array(b || 0);
+    if (!b?.byteLength) return a instanceof Uint8Array ? a : new Uint8Array(a);
+    const out = new Uint8Array(a.byteLength + b.byteLength);
+    out.set(a, 0);
+    out.set(b, a.byteLength);
+    return out;
+  };
+
+  const base64UrlDecode = (value) => {
+    try {
+      const s = String(value || "").trim().replace(/-/g, "+").replace(/_/g, "/");
+      if (!s || !/^[A-Za-z0-9+/]*={0,2}$/.test(s)) return null;
+      const padded = s + "=".repeat((4 - (s.length % 4)) % 4);
+      const raw = atob(padded);
+      return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    } catch (_) {
+      return null;
+    }
+  };
+
+  const looksLikeProxyHeader = (u8) => {
+    if (!u8 || u8.byteLength < 17) return false;
+    if ((u8[0] === 0 || u8[0] === 1) && parseUUID(u8)) return true;
+    if (u8.byteLength >= 58) {
+      let ascii = "";
+      for (let i = 0; i < 56; i++) ascii += String.fromCharCode(u8[i]);
+      return /^[0-9a-f]{56}$/i.test(ascii) && u8[56] === 13 && u8[57] === 10;
+    }
+    return false;
+  };
+
+  /*
+   * Some clients can carry the first request bytes in
+   * Sec-WebSocket-Protocol. We only consume it when it decodes to a real
+   * VLESS/Trojan header; ordinary subprotocol tokens are ignored.
+   *
+   * The old code incorrectly decoded ?ed=2560 as if the query value itself
+   * were base64 payload. "ed=2560" is a size/config hint, not request bytes.
+   */
+  let earlyData = null;
+  try {
+    const swp = request.headers.get("sec-websocket-protocol") || "";
+    for (const token of swp.split(",")) {
+      const candidate = base64UrlDecode(token.trim());
+      if (candidate && looksLikeProxyHeader(candidate)) {
+        earlyData = candidate;
+        break;
+      }
+    }
+  } catch (_) {}
+
+  const readU16 = (u8, off) => (u8[off] << 8) | u8[off + 1];
+
+  const parseAddress = (u8, offset, atyp) => {
+    try {
+      if (atyp === 1) {
+        if (u8.byteLength < offset + 4) return { needMore: true };
+        return {
+          host: `${u8[offset]}.${u8[offset + 1]}.${u8[offset + 2]}.${u8[offset + 3]}`,
+          offset: offset + 4
+        };
+      }
+      if (atyp === 2) {
+        if (u8.byteLength < offset + 1) return { needMore: true };
+        const len = u8[offset];
+        if (u8.byteLength < offset + 1 + len) return { needMore: true };
+        return {
+          host: dec.decode(u8.slice(offset + 1, offset + 1 + len)),
+          offset: offset + 1 + len
+        };
+      }
+      if (atyp === 3) {
+        if (u8.byteLength < offset + 16) return { needMore: true };
+        const parts = [];
+        for (let i = 0; i < 8; i++)
+          parts.push(readU16(u8, offset + i * 2).toString(16));
+        return { host: parts.join(":"), offset: offset + 16 };
+      }
+      return { invalid: true };
+    } catch (_) {
+      return { invalid: true };
+    }
+  };
+
+  const parseVlessRequest = async (chunk) => {
+    const u8 = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+    if (u8.byteLength < 17) return { needMore: true };
+
+    if (u8[0] !== 0 && u8[0] !== 1) return { invalid: true };
+    const id = parseUUID(u8);
+    if (!id) return { invalid: true };
+
+    let offset = 17;
+    if (u8.byteLength < offset + 1) return { needMore: true };
+
+    const addonLen = u8[offset];
+    offset += 1;
+
+    // Wait until the full request header can be parsed before touching D1.
+    if (u8.byteLength < offset + addonLen + 1 + 2 + 1)
+      return { needMore: true };
+
+    offset += addonLen;
+
+    const command = u8[offset++];
+    if (command !== 0x01) return { invalid: true }; // TCP CONNECT only
+
+    const port = readU16(u8, offset);
+    offset += 2;
+
+    const atyp = u8[offset++];
+    const addr = parseAddress(u8, offset, atyp);
+    if (addr.needMore) return { needMore: true };
+    if (addr.invalid || !addr.host) return { invalid: true };
+    offset = addr.offset;
+
+    let user;
+    try {
+      user = await env.DB.prepare("SELECT * FROM users WHERE uuid=?").bind(id).first();
+    } catch (_) {
+      return { invalid: true };
+    }
+
+    if (!(await checkUser(env, user))) return { authFailed: true };
+
+    return {
+      ok: true,
+      isVless: true,
+      user,
+      username: user.username,
+      versionByte: u8[0],
+      host: addr.host,
+      port,
+      payload: u8.slice(offset)
+    };
+  };
+
+  const processTrojanRequest = async (chunk) => {
+    const u8 = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+    if (u8.byteLength < 58) return { needMore: true };
+
+    const hashHex = dec.decode(u8.slice(0, 56));
+    if (!/^[0-9a-f]{56}$/i.test(hashHex) || u8[56] !== 0x0d || u8[57] !== 0x0a)
+      return { invalid: true };
+
+    let offset = 58;
+    if (u8.byteLength < offset + 1) return { needMore: true };
+
+    const command = u8[offset++];
+    if (command !== 0x01) return { invalid: true }; // TCP CONNECT only
+
+    if (u8.byteLength < offset + 1) return { needMore: true };
+    const atyp = u8[offset++];
+
+    const addr = parseAddress(u8, offset, atyp);
+    if (addr.needMore) return { needMore: true };
+    if (addr.invalid || !addr.host) return { invalid: true };
+    offset = addr.offset;
+
+    if (u8.byteLength < offset + 2) return { needMore: true };
+    const port = readU16(u8, offset);
+    offset += 2;
+
+    if (u8.byteLength >= offset + 2 && u8[offset] === 0x0d && u8[offset + 1] === 0x0a)
+      offset += 2;
+
+    let user = null;
+    try {
+      const { results } = await env.DB
+        .prepare("SELECT * FROM users WHERE is_active=1 LIMIT 1000")
+        .all();
+
+      const target = hashHex.toLowerCase();
+      for (const u of results || []) {
+        if (sha224(u.uuid) === target) {
+          user = u;
+          break;
+        }
+      }
+    } catch (_) {
+      return { invalid: true };
+    }
+
+    if (!(await checkUser(env, user))) return { authFailed: true };
+
+    return {
+      ok: true,
+      isVless: false,
+      user,
+      username: user.username,
+      versionByte: 0,
+      host: addr.host,
+      port,
+      payload: u8.slice(offset)
+    };
+  };
+
+  const connectRemote = async (parsed) => {
+    try {
+      remote = connect({ hostname: parsed.host, port: parsed.port });
+      remoteWriter = remote.writable.getWriter();
+
+      if (parsed.payload?.byteLength) {
+        await remoteWriter.write(parsed.payload);
+        bytesUp += parsed.payload.byteLength;
+        maybeFlush();
+      }
+
+      username = parsed.username;
+      authenticated = true;
+
+      // VLESS response header: version + addons length(0).
+      if (parsed.isVless && server.readyState === 1)
+        server.send(new Uint8Array([parsed.versionByte, 0]));
+
+      const reader = remote.readable.getReader();
+      (async () => {
+        try {
+          while (!closed) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (!value?.byteLength) continue;
+
+            bytesDown += value.byteLength;
+            maybeFlush();
+
+            if (server.readyState !== 1) break;
+            server.send(value);
+          }
+        } catch (_) {
+          // Client/network closure is normal; close below.
+        } finally {
+          try { reader.releaseLock?.(); } catch (_) {}
+          if (!closed) closeAll(1000);
+        }
+      })();
+
+      return true;
+    } catch (_) {
+      closeAll(1011);
+      return false;
+    }
+  };
+
+  const processChunk = async (data) => {
+    if (closed || !data?.byteLength) return;
+
+    if (!authenticated) {
+      headerBuffer = appendBytes(headerBuffer, data);
+
+      // Protect the isolate from a maliciously large incomplete header.
+      if (headerBuffer.byteLength > 64 * 1024) {
+        closeAll(1002);
+        return;
+      }
+
+      let parsed;
+      const first = headerBuffer[0];
+
+      if (first === 0 || first === 1) {
+        parsed = await parseVlessRequest(headerBuffer);
+      } else {
+        parsed = await processTrojanRequest(headerBuffer);
+      }
+
+      if (parsed.needMore) return;
+
+      if (parsed.authFailed) {
+        closeAll(1008);
+        return;
+      }
+
+      if (!parsed.ok) {
+        closeAll(1002);
+        return;
+      }
+
+      headerBuffer = new Uint8Array(0);
+      await connectRemote(parsed);
+      return;
+    }
+
+    if (!remoteWriter || closed) return;
+
+    try {
+      await remoteWriter.write(data);
+      bytesUp += data.byteLength;
+      maybeFlush();
+    } catch (_) {
+      closeAll(1011);
+    }
+  };
+
+  const enqueue = (data) => {
+    // Keep WebSocket frame ordering deterministic. A new frame never races
+    // the previous remoteWriter.write(), and no artificial timer is used.
+    processing = processing.then(
+      () => processChunk(data),
+      () => processChunk(data)
+    ).catch(() => closeAll(1011));
+    return processing;
+  };
+
+  server.addEventListener("message", (ev) => {
+    try {
+      const data = ev.data instanceof ArrayBuffer
+        ? new Uint8Array(ev.data)
+        : (ArrayBuffer.isView(ev.data)
+          ? new Uint8Array(ev.data.buffer, ev.data.byteOffset, ev.data.byteLength)
+          : enc.encode(String(ev.data || "")));
+      if (data.byteLength) void enqueue(data);
+    } catch (_) {
+      closeAll(1003);
+    }
+  });
+
+  server.addEventListener("close", () => closeAll(1000));
+  server.addEventListener("error", () => closeAll(1011));
+
+  if (earlyData?.byteLength) void enqueue(earlyData);
+
   return new Response(null, { status: 101, webSocket: client });
 }
 
@@ -500,9 +694,8 @@ function infoLineFromTemplate(tpl, user, prefix) {
 
 function randomUpperCase(str) {
   let result = "";
-  for (let i = 0; i < str.length; i++) {
+  for (let i = 0; i < str.length; i++)
     result += Math.random() < 0.5 ? str[i].toUpperCase() : str[i];
-  }
   return result;
 }
 
@@ -510,32 +703,44 @@ function getRandomString(minLen, maxLen) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   const len = Math.floor(Math.random() * (maxLen - minLen + 1)) + minLen;
   let out = "";
-  for (let i = 0; i < len; i++) out += chars.charAt(Math.floor(Math.random() * chars.length));
+  for (let i = 0; i < len; i++)
+    out += chars.charAt(Math.floor(Math.random() * chars.length));
   return out;
 }
 
-/** BPB-style WS path: /tr/xxx or /vl/xxx */
+/*
+ * BPB-style WebSocket paths:
+ *   VLESS  -> /vl/<random>
+ *   Trojan -> /tr/<random>
+ *
+ * Do NOT append "?ed=2560" here. 2560 is not base64 payload and treating it
+ * as request bytes was one of the causes of failed first-handshakes.
+ */
 function generateWsPath(protocol) {
   const proto = protocol === "trojan" ? "tr" : "vl";
-  return `/${proto}/${getRandomString(16, 32)}`;
+  return `/${proto}/${getRandomString(20, 32)}`;
 }
 
 function buildUserLinks(host, user, c) {
-  // BPB-Wizard logic: random path /tr|vl/xxx?ed=2560, alpn=http/1.1, randomized SNI
-  const ports = (c.ports || "443,80").split(/[,\s]+/).map((p) => parseInt(p, 10)).filter((p) => p > 0 && p < 65536);
+  const ports = (c.ports || "443,80")
+    .split(/[,\s]+/)
+    .map((p) => parseInt(p, 10))
+    .filter((p) => p > 0 && p < 65536);
+
   const clean = parseCleanLines(c.clean_ips);
-  const protocol = (c.protocol || "vless").toLowerCase();
+  const protocol = (c.protocol || "vless").toLowerCase() === "trojan" ? "trojan" : "vless";
   const tpl = c.name_template || "{PREFIX} · {USER} · {IP_NAME}";
   const prefix = c.sub_prefix || "Leviko";
   const links = [];
   const fp = (c.fingerprint || "chrome").trim() || "chrome";
-  // ALPN: BPB uses only http/1.1 (better compatibility / upload on many networks)
   const alpn = encodeURIComponent((c.alpn || "http/1.1").trim() || "http/1.1");
 
-  // custom info entries (display-only)
+  const tlsPorts = new Set([443, 2053, 2083, 2087, 2096, 8443]);
+
   const entries = Array.isArray(c.info_entries) ? c.info_entries : [];
   for (const e of entries) {
-    if (e && String(e).trim()) links.push(infoLineFromTemplate(String(e).trim(), user, prefix));
+    if (e && String(e).trim())
+      links.push(infoLineFromTemplate(String(e).trim(), user, prefix));
   }
 
   const make = (addr, port, tls, ipName) => {
@@ -547,42 +752,62 @@ function buildUserLinks(host, user, c) {
       HOST: host,
       IP: addr,
       IP_NAME: ipName || (addr === host ? "Core" : addr),
-      FLAG: "", COUNTRY: "", CITY: "", ISP: "",
+      FLAG: "",
+      COUNTRY: "",
+      CITY: "",
+      ISP: "",
     };
-    const name = encodeURIComponent(applyTemplate(tpl, vars).replace(/\s·\s$/g, "").replace(/^\s·\s/g, "").trim() || prefix);
-    // BPB path: /tr/RANDOM or /vl/RANDOM + early-data
-    const wsPath = generateWsPath(protocol) + "?ed=2560";
+
+    const displayName = applyTemplate(tpl, vars)
+      .replace(/\s·\s$/g, "")
+      .replace(/^\s·\s/g, "")
+      .trim() || prefix;
+
+    const name = encodeURIComponent(displayName);
+    const wsPath = generateWsPath(protocol);
     const pathEnc = encodeURIComponent(wsPath);
-    // BPB: randomize SNI case (helps with DPI fingerprinting)
+
+    // SNI is the worker hostname even when the socket address is a Cloudflare
+    // clean IP. Host remains the same hostname so the edge routes correctly.
     const sni = randomUpperCase(host);
-    // host header stays lowercase domain (or clean IP host override not needed)
     const hostHeader = host;
+
+    const common = `type=ws&host=${encodeURIComponent(hostHeader)}&path=${pathEnc}`;
 
     if (protocol === "trojan") {
       if (tls) {
-        return `trojan://${user.uuid}@${addr}:${port}?security=tls&sni=${sni}&fp=${fp}&type=ws&host=${hostHeader}&path=${pathEnc}&alpn=${alpn}#${name}`;
+        return `trojan://${user.uuid}@${addr}:${port}?security=tls&sni=${encodeURIComponent(sni)}&fp=${encodeURIComponent(fp)}&${common}&alpn=${alpn}#${name}`;
       }
-      return `trojan://${user.uuid}@${addr}:${port}?security=none&type=ws&host=${hostHeader}&path=${pathEnc}#${name}`;
+      return `trojan://${user.uuid}@${addr}:${port}?security=none&${common}#${name}`;
     }
+
     if (tls) {
-      return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=tls&sni=${sni}&fp=${fp}&type=ws&host=${hostHeader}&path=${pathEnc}&alpn=${alpn}#${name}`;
+      return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=tls&sni=${encodeURIComponent(sni)}&fp=${encodeURIComponent(fp)}&${common}&alpn=${alpn}#${name}`;
     }
-    return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=none&type=ws&host=${hostHeader}&path=${pathEnc}#${name}`;
+
+    return `vless://${user.uuid}@${addr}:${port}?encryption=none&security=none&${common}#${name}`;
   };
 
   if (clean.length) {
     for (const row of clean) {
       for (const port of (ports.length ? ports : [443])) {
-        links.push(make(row.ip, port, port === 443 || port === 8443 || port === 2053 || port === 2083 || port === 2087 || port === 2096, row.name));
+        links.push(make(row.ip, port, tlsPorts.has(port), row.name));
       }
     }
   } else {
     const mainPort = ports.includes(443) ? 443 : (ports[0] || 443);
-    links.push(make(host, mainPort, mainPort === 443 || mainPort === 8443 || mainPort === 2053 || mainPort === 2083 || mainPort === 2087 || mainPort === 2096, "Core"));
-    if (ports.includes(80) && mainPort !== 80) links.push(make(host, 80, false, "Core-80"));
+    links.push(make(host, mainPort, tlsPorts.has(mainPort), "Core"));
+
+    // Keep a plain HTTP fallback only when explicitly requested.
+    if (ports.includes(80) && mainPort !== 80)
+      links.push(make(host, 80, false, "Core-80"));
   }
 
-  const up = (c.upstream || "").split("\n").map((s) => s.trim()).filter((s) => /^(vless|trojan|vmess|ss):\/\//i.test(s));
+  const up = (c.upstream || "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => /^(vless|trojan|vmess|ss):\/\//i.test(s));
+
   for (const line of up.slice(0, 50)) links.push(line);
 
   return links;
