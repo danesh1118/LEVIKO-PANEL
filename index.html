@@ -28,27 +28,6 @@ label{display:block;font-size:.76rem;font-weight:600;color:var(--mut);margin-bot
 <div class="panel on" id="p1"><div class="card">
 <div class="ch"><div class="badge">1</div><div><h2>توکن API</h2><p>Cloudflare API Token</p></div></div>
 <div class="conn" id="connBox"><div class="sp"></div><span>آماده‌سازی اتصال…</span></div>
-<details style="margin:12px 0;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--bg2)">
-  <summary style="cursor:pointer;color:var(--p2);font-weight:700;font-size:.86rem">🔗 از قبل پروکسی دارم؛ واردکردن آدرس آماده</summary>
-  <p class="note" style="margin:10px 0">اگر قبلاً پروکسی LEVIKO ساخته‌ای، آدرس Worker را اینجا وارد کن؛ نیازی به ساخت دوباره نیست.</p>
-  <div class="field"><label>آدرس پروکسی آماده</label><input id="customProxyUrl" dir="ltr" style="text-align:left" placeholder="https://your-worker.yourname.workers.dev"></div>
-  <button class="btn btn-p" id="btnCheckCustomProxy" type="button" onclick="connectCustomProxy()">بررسی اتصال و ادامه</button>
-  <div id="customProxyResult" class="note" style="margin-top:10px"></div>
-</details>
-<div id="proxySetup" style="display:none;margin:14px 0;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--bg2)">
-  <h3 style="font-size:1rem;margin-bottom:8px;color:var(--p2)">⚠️ اتصال مستقیم برقرار نشد؛ پروکسی شخصی بساز</h3>
-  <p class="note" style="line-height:1.9">مرورگر ممکن است دسترسی مستقیم به Cloudflare API را به‌دلیل محدودیت CORS مسدود کند. برای ادامه، یک Worker پروکسی رایگان در Cloudflare بساز:</p>
-  <ol style="padding-right:20px;font-size:.82rem;line-height:2.1;color:var(--mut)">
-    <li><a href="https://dash.cloudflare.com/?to=/:account/workers-and-pages/create" target="_blank" rel="noopener" style="color:var(--p2)">ورود به Cloudflare و ساخت Worker</a></li>
-    <li>یک نام دلخواه مثل <b dir="ltr">leviko-proxy</b> انتخاب کن و Worker را بساز.</li>
-    <li>کد زیر را کامل کپی کن و جایگزین کد پیش‌فرض Worker کن.</li>
-    <li>روی <b>Deploy</b> بزن و آدرس <b dir="ltr">workers.dev</b> آن را بردار.</li>
-    <li>آدرس را در کادر پایین وارد و اتصال را بررسی کن.</li>
-  </ol>
-  <pre id="proxyCodeView" dir="ltr" style="white-space:pre;overflow:auto;max-height:230px;padding:12px;background:#08080d;border:1px solid var(--line);border-radius:10px;font-size:10px;color:#c4b5fd;text-align:left"></pre>
-  <button class="btn btn-s" type="button" onclick="copyProxySetupCode()">📋 کپی کد کامل پروکسی</button>
-  <p class="note">بعد از Deploy، آدرس را در بخش «از قبل پروکسی دارم» بالای این راهنما وارد کن. آدرس موفق ذخیره می‌شود و دفعات بعد خودکار استفاده خواهد شد.</p>
-</div>
 <a class="btn btn-s" target="_blank" rel="noopener" href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%5D&accountId=*&zoneId=all&name=Leviko-Installer">🔑 ساخت توکن آماده‌شده</a>
 <div class="field"><label>API Token</label><input type="password" id="apiToken" dir="ltr" style="text-align:left" placeholder="••••••••"><button type="button" class="eye" onclick="tog('apiToken')">👁</button></div>
 <div class="err" id="e1"></div><button class="btn btn-p" id="btnNext" onclick="go2()" disabled>ادامه</button>
@@ -81,7 +60,6 @@ label{display:block;font-size:.76rem;font-weight:600;color:var(--mut);margin-bot
 </div>
 
 <script>
-const PROXY_SETUP_CODE = "// Leviko Installer Proxy Worker\n// Relays Cloudflare API calls for the web installer.\n// Restricted to installer-required API paths only.\n\nconst CORS = {\n  'Access-Control-Allow-Origin': '*',\n  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',\n  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Proxy-Target, X-GitHub-Url',\n  'Access-Control-Max-Age': '86400',\n};\n\nconst jsonResp = (data, status = 200) =>\n  new Response(JSON.stringify(data), {\n    status,\n    headers: { 'Content-Type': 'application/json', ...CORS },\n  });\n\n// Only these Cloudflare API path patterns are allowed.\n// Prevents the proxy from being abused as a general-purpose CORS relay.\nfunction isAllowedPath(path) {\n  // Allow /accounts (list all accounts) and /accounts/{id}...\n  if (path === '/accounts' || path === '/accounts/') return true;\n  if (!path.startsWith('/accounts/')) return false;\n  const patterns = [\n    /^\\/accounts\\/[^/]+\\/d1\\/database/,                // D1 create, list, query, delete\n    /^\\/accounts\\/[^/]+\\/workers\\/scripts\\//,           // Worker upload (PUT), settings, delete\n    /^\\/accounts\\/[^/]+\\/workers\\/scripts\\/[^/]+\\/deployments$/, // Worker deployments\n    /^\\/accounts\\/[^/]+\\/workers\\/workers(\\/|$)/,       // Worker create, list, get, versions (Beta API)\n    /^\\/accounts\\/[^/]+\\/workers\\/services\\//,          // Worker services (subdomain enablement)\n    /^\\/accounts\\/[^/]+\\/workers\\/subdomain$/,          // Workers.dev subdomain\n    /^\\/accounts\\/[^/]+$/,                              // Account info\n  ];\n  return patterns.some(p => p.test(path));\n}\n\nexport default {\n  async fetch(request) {\n    if (request.method === 'OPTIONS') {\n      return new Response(null, { status: 204, headers: CORS });\n    }\n\n    const url = new URL(request.url);\n\n    // Health check\n    if (url.pathname === '/health') {\n      return jsonResp({ ok: true, ts: Date.now() });\n    }\n\n    // Proxy GitHub raw content\n    if (url.pathname === '/github') {\n      const target = request.headers.get('X-GitHub-Url');\n      if (!target) return jsonResp({ error: 'Missing X-GitHub-Url header' }, 400);\n      if (!target.startsWith('https://raw.githubusercontent.com/') &&\n          !target.startsWith('https://cdn.jsdelivr.net/') &&\n          !target.startsWith('https://api.github.com/')) {\n        return jsonResp({ error: 'URL not allowed' }, 403);\n      }\n      try {\n        const resp = await fetch(target);\n        return new Response(await resp.text(), {\n          status: resp.status,\n          headers: { 'Content-Type': 'application/javascript', ...CORS },\n        });\n      } catch (e) {\n        return jsonResp({ error: e.message }, 502);\n      }\n    }\n\n    // Proxy Cloudflare API — restricted paths only\n    const apiToken = request.headers.get('Authorization');\n    if (!apiToken) return jsonResp({ error: 'Missing Authorization header' }, 401);\n\n    const target = request.headers.get('X-Proxy-Target');\n    if (!target) return jsonResp({ error: 'Missing X-Proxy-Target header' }, 400);\n\n    if (!isAllowedPath(target)) {\n      return jsonResp({ error: 'Path not allowed by proxy' }, 403);\n    }\n\n    try {\n      const cfUrl = 'https://api.cloudflare.com/client/v4' + target;\n      const opts = {\n        method: request.method,\n        headers: { Authorization: apiToken }\n      };\n\n      if (request.method !== 'GET' && request.method !== 'HEAD') {\n        const ct = request.headers.get('Content-Type') || '';\n        if (ct.includes('multipart/form-data')) {\n          const formData = await request.formData();\n          const fieldNames = [];\n          for (const [key, value] of formData.entries()) {\n            if (value instanceof File) {\n              fieldNames.push(key + '(file: ' + value.name + ', ' + value.size + ' bytes, ' + value.type + ')');\n            } else {\n              fieldNames.push(key + '(string: ' + String(value).length + ' chars)');\n            }\n          }\n          console.log('[Proxy] ' + request.method + ' ' + target + ' multipart fields: [' + fieldNames.join(', ') + ']');\n          opts.body = formData;\n        } else {\n          opts.body = await request.text();\n          opts.headers['Content-Type'] = 'application/json';\n        }\n      }\n\n      console.log('[Proxy] ' + request.method + ' ' + cfUrl);\n      const resp = await fetch(cfUrl, opts);\n      const respText = await resp.text();\n      console.log('[Proxy] Response: HTTP ' + resp.status + ', ' + respText.length + ' bytes');\n      if (resp.status >= 400) {\n        console.log('[Proxy] Error response: ' + respText.substring(0, 500));\n      }\n      return new Response(respText, {\n        status: resp.status,\n        headers: { 'Content-Type': 'application/json', ...CORS },\n      });\n    } catch (e) {\n      console.error('[Proxy] Error:', e.message);\n      return jsonResp({ error: e.message }, 502);\n    }\n  },\n};\n";
 const DEFAULT_PROXY='https://nahan-installer-proxy.iyebekhe.workers.dev';
 const CF='https://api.cloudflare.com/client/v4';
 const SOURCES=[
@@ -120,41 +98,12 @@ async function cf(path,opts={}){
 async function testDirect(){
  try{const r=await fetch(CF+'/accounts',{headers:{Authorization:'Bearer test'}});return [200,401,403].includes(r.status)}catch{return false}
 }
-
-function showProxySetup(){
- const box=document.getElementById('proxySetup');
- if(box){box.style.display='block';const code=document.getElementById('proxyCodeView');if(code)code.textContent=PROXY_SETUP_CODE;}
-}
-async function copyProxySetupCode(){
- try{await navigator.clipboard.writeText(PROXY_SETUP_CODE);alert('کد کامل پروکسی کپی شد.');}
- catch{const t=document.createElement('textarea');t.value=PROXY_SETUP_CODE;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();alert('کد پروکسی کپی شد.');}
-}
-async function connectCustomProxy(){
- const input=document.getElementById('customProxyUrl'),out=document.getElementById('customProxyResult'),btn=document.getElementById('btnCheckCustomProxy');
- let url=(input?.value||'').trim().replace(/\/+$/,'');
- if(!url){out.textContent='لطفاً آدرس Worker را وارد کن.';out.style.color='var(--err)';return;}
- try{const parsed=new URL(url);if(parsed.protocol!=='https:'||!parsed.hostname.endsWith('.workers.dev'))throw new Error('آدرس باید HTTPS و از نوع workers.dev باشد.');}
- catch(e){out.textContent=e.message||'آدرس معتبر نیست.';out.style.color='var(--err)';return;}
- btn.disabled=true;btn.textContent='در حال بررسی اتصال…';out.textContent='';
- try{
-   const r=await fetch(url+'/health',{method:'GET',cache:'no-store'});
-   const j=await r.json();
-   if(!r.ok||j.ok!==true)throw new Error('این Worker پاسخ معتبر پروکسی LEVIKO را برنگرداند.');
-   S.proxy=url;localStorage.setItem('leviko_proxy_url',url);
-   document.getElementById('connBox').innerHTML='<span style="color:var(--ok)">✓</span><span>اتصال به پروکسی شخصی موفق بود</span>';
-   out.textContent='✓ اتصال موفق؛ آدرس ذخیره شد. در حال ادامه…';out.style.color='var(--ok)';
-   document.getElementById('btnNext').disabled=false;
-   setTimeout(()=>{if(document.getElementById('p1').classList.contains('on'))go2();},700);
- }catch(e){out.textContent='✗ اتصال ناموفق: '+(e.message||'آدرس یا تنظیمات Worker را بررسی کن.');out.style.color='var(--err)';}
- finally{btn.disabled=false;btn.textContent='بررسی اتصال و ادامه';}
-}
-
 async function initConn(){
  const box=document.getElementById('connBox'),btn=document.getElementById('btnNext');
  if(S.proxy){try{const r=await fetch(S.proxy.replace(/\/$/,'')+'/health');const j=await r.json();if(j.ok){box.innerHTML='<span style="color:var(--ok)">✓</span><span>پروکسی آماده</span>';btn.disabled=false;return}}catch{S.proxy='';localStorage.removeItem('leviko_proxy_url')}}
  if(await testDirect()){S.proxy='';box.innerHTML='<span style="color:var(--ok)">✓</span><span>اتصال مستقیم آماده</span>';btn.disabled=false;return}
  try{const r=await fetch(DEFAULT_PROXY+'/health');const j=await r.json();if(j.ok){S.proxy=DEFAULT_PROXY;localStorage.setItem('leviko_proxy_url',DEFAULT_PROXY);box.innerHTML='<span style="color:var(--ok)">✓</span><span>پروکسی آماده</span>';btn.disabled=false;return}}catch{}
- box.innerHTML='<span style="color:var(--err)">✗</span><span>اتصال ناموفق</span>';btn.disabled=false;showProxySetup();
+ box.innerHTML='<span style="color:var(--err)">✗</span><span>اتصال ناموفق</span>';btn.disabled=false;
 }
 
 async function go2(){

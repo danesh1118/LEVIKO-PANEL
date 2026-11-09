@@ -92,13 +92,8 @@ const html = (b, s = 200) =>
 const okName = (s) => typeof s === "string" && /^[a-zA-Z0-9_\-.]{1,48}$/.test(s);
 
 /* ─── DB ─── */
-const DB_INIT_PROMISES = new WeakMap();
 const Store = {
   async init(db) {
-    if (!db || (typeof db !== "object" && typeof db !== "function")) throw new Error("D1 binding is unavailable");
-    const cached = DB_INIT_PROMISES.get(db);
-    if (cached) return cached;
-    const initPromise = (async () => {
     await db.batch([
       db.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`),
       db.prepare(`CREATE TABLE IF NOT EXISTS users (
@@ -148,9 +143,6 @@ const Store = {
     ]) {
       try { await db.prepare(sql).run(); } catch (_) {}
     }
-    })();
-    DB_INIT_PROMISES.set(db, initPromise);
-    try { await initPromise; } catch (error) { DB_INIT_PROMISES.delete(db); throw error; }
   },
   async get(db, k, fb = null) {
     const r = await db.prepare("SELECT value FROM settings WHERE key=?").bind(k).first();
@@ -166,6 +158,34 @@ const Store = {
     } catch (_) {}
   },
 };
+
+// Nahan-inspired runtime hardening: initialize/migrate D1 once per isolate,
+// share the same in-flight promise across concurrent requests, and retry after failure.
+const dbInitPromises = new WeakMap();
+async function ensureDatabase(db) {
+  if (!db || (typeof db !== "object" && typeof db !== "function")) {
+    throw new Error("D1 binding is missing or invalid");
+  }
+  let pending = dbInitPromises.get(db);
+  if (!pending) {
+    pending = Store.init(db).catch((error) => {
+      dbInitPromises.delete(db);
+      throw error;
+    });
+    dbInitPromises.set(db, pending);
+  }
+  return pending;
+}
+
+function withTimeout(promise, ms, label = "operation") {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 /* ─── Auth ─── */
 async function getSession(req, db) {
@@ -863,25 +883,15 @@ async function handleSub(url, env, request) {
   });
 }
 
-/* ─── bounded outbound requests ─── */
-async function fetchWithTimeout(resource, init = {}, timeoutMs = 10000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort("request_timeout"), timeoutMs);
-  try {
-    return await fetch(resource, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /* ─── Telegram bot (Mirza-style) ─── */
 async function tgApi(token, method, body) {
-  const r = await fetchWithTimeout(`https://api.telegram.org/bot${token}/${method}`, {
+  const response = await withTimeout(fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body || {}),
-  }, 10000);
-  return r.json().catch(() => ({}));
+  }), 12000, `Telegram ${method}`);
+  if (!response.ok) throw new Error(`Telegram ${method} returned HTTP ${response.status}`);
+  return response.json().catch(() => ({}));
 }
 
 async function ensureCustomer(db, tgId, name = "", referrer = "") {
@@ -1710,7 +1720,7 @@ async function handleApi(request, url, env) {
     return json({ ok: true }, 200, { "Set-Cookie": "lv_session=; Path=/; Max-Age=0" });
 
   // telegram webhook (no session)
-  if (path === "/telegram" && method === "POST") return await handleTelegram(request, env);
+  if (path === "/telegram" && method === "POST") return handleTelegram(request, env);
 
   const sess = await getSession(request, env.DB);
   if (sess.needSetup) return json({ error: "setup" }, 403);
@@ -2741,40 +2751,47 @@ async function bumpCfReq(env, ctx) {
 
 export default {
   async fetch(request, env, ctx) {
+    const requestId = request.headers.get("cf-ray") || crypto.randomUUID();
+    // Keep Leviko's DB binding; also accept Nahan's IOT_DB name without changing app code.
+    if (!env.DB && env.IOT_DB) env = { ...env, DB: env.IOT_DB };
+    const db = env.DB;
     try {
-      if (!env.DB) return new Response("D1 binding 'DB' missing", { status: 500 });
-    try { await Store.init(env.DB); } catch (_) {}
+      if (!db) {
+        console.error(`[LEVIKO:${requestId}] Missing D1 binding. Expected DB (or IOT_DB alias).`);
+        return new Response("D1 binding missing: configure DB (or IOT_DB)", {
+          status: 500, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }
+        });
+      }
+      await ensureDatabase(db);
 
-    try {
       if (env.ADMIN_PASS) {
-        const exists = await Store.get(env.DB, "admin_pass");
+        const exists = await Store.get(db, "admin_pass");
         if (!exists) {
           const user = String(env.ADMIN_USER || "admin").trim() || "admin";
-          await Store.set(env.DB, "admin_user", await sha256(user));
-          await Store.set(env.DB, "admin_pass", await sha256(String(env.ADMIN_PASS)));
-          await Store.set(env.DB, "admin_user_plain", user);
+          await Store.set(db, "admin_user", await sha256(user));
+          await Store.set(db, "admin_pass", await sha256(String(env.ADMIN_PASS)));
+          await Store.set(db, "admin_user_plain", user);
         }
       }
-    } catch (_) {}
 
     const url = new URL(request.url);
     const path = url.pathname;
     const isWs = (request.headers.get("Upgrade") || "").toLowerCase() === "websocket";
 
-    if (isWs) return await handleVless(request, env, ctx);
-    if ((path === WS || path.startsWith(WS + "/")) && isWs) return await handleVless(request, env, ctx);
+    if (isWs) return handleVless(request, env, ctx);
+    if ((path === WS || path.startsWith(WS + "/")) && isWs) return handleVless(request, env, ctx);
 
-    if (path.startsWith("/api/")) return await handleApi(request, url, env);
+    if (path.startsWith("/api/")) return handleApi(request, url, env);
 
     if (path === ROOT || path === ROOT + "/") {
-      if (url.searchParams.has("sub")) return await handleSub(url, env, request);
+      if (url.searchParams.has("sub")) return handleSub(url, env, request);
       if (url.searchParams.has("u") || url.searchParams.has("status")) {
         const name = (url.searchParams.get("u") || url.searchParams.get("status") || "").trim();
         if (name) {
-          const user = await env.DB.prepare("SELECT * FROM users WHERE username=? COLLATE NOCASE OR uuid=?")
+          const user = await db.prepare("SELECT * FROM users WHERE username=? COLLATE NOCASE OR uuid=?")
             .bind(name, name).first();
           if (user) {
-            const c = await cfg(env.DB);
+            const c = await cfg(db);
             return html(statusPage(user, c, url.origin));
           }
           return new Response("User not found", { status: 404 });
@@ -2787,17 +2804,17 @@ export default {
     const statusMatch = path.match(/^(?:\/8080)?\/status\/([^/]+)\/?$/);
     if (statusMatch) {
       const name = decodeURIComponent(statusMatch[1]);
-      const user = await env.DB.prepare("SELECT * FROM users WHERE username=? COLLATE NOCASE OR uuid=?")
+      const user = await db.prepare("SELECT * FROM users WHERE username=? COLLATE NOCASE OR uuid=?")
         .bind(name, name).first();
       if (user) {
-        const c = await cfg(env.DB);
+        const c = await cfg(db);
         return html(statusPage(user, c, url.origin));
       }
       return new Response("User not found", { status: 404 });
     }
 
     if (path === DASH || path === DASH + "/") {
-      const sess = await getSession(request, env.DB);
+      const sess = await getSession(request, db);
       if (sess.needSetup) return html(authPage(true));
       if (!sess.ok) return html(authPage(false));
       return html(panelPage());
@@ -2805,14 +2822,16 @@ export default {
 
     return html(camouflage());
     } catch (err) {
-      const message = String(err?.message || err || "Unknown Worker error");
-      const stack = String(err?.stack || "");
-      // Keep diagnostics in Workers Logs; never include tokens, cookies or request bodies.
-      console.error("[LEVIKO_WORKER_EXCEPTION]", message, stack.slice(0, 3000));
-      try { await Store.log(env?.DB, "worker_error", (message + " " + stack).slice(0, 200)); } catch (_) {}
-      return new Response("Leviko Worker Error: request failed safely. Check Workers Logs for LEVIKO_WORKER_EXCEPTION.", {
+      const message = err?.stack || err?.message || String(err);
+      console.error(`[LEVIKO:${requestId}] Unhandled request exception`, message);
+      try {
+        if (db) await Store.log(db, "worker_error", `${requestId}: ${err?.message || String(err)}`);
+      } catch (logError) {
+        console.error(`[LEVIKO:${requestId}] Failed to persist error log`, logError?.message || logError);
+      }
+      return new Response(`Leviko Worker Error (ref: ${requestId})`, {
         status: 500,
-        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Leviko-Error": "handled-worker-exception" }
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Leviko-Request-Id": requestId }
       });
     }
   },
