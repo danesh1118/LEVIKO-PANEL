@@ -92,8 +92,13 @@ const html = (b, s = 200) =>
 const okName = (s) => typeof s === "string" && /^[a-zA-Z0-9_\-.]{1,48}$/.test(s);
 
 /* ─── DB ─── */
+const DB_INIT_PROMISES = new WeakMap();
 const Store = {
   async init(db) {
+    if (!db || (typeof db !== "object" && typeof db !== "function")) throw new Error("D1 binding is unavailable");
+    const cached = DB_INIT_PROMISES.get(db);
+    if (cached) return cached;
+    const initPromise = (async () => {
     await db.batch([
       db.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`),
       db.prepare(`CREATE TABLE IF NOT EXISTS users (
@@ -143,6 +148,9 @@ const Store = {
     ]) {
       try { await db.prepare(sql).run(); } catch (_) {}
     }
+    })();
+    DB_INIT_PROMISES.set(db, initPromise);
+    try { await initPromise; } catch (error) { DB_INIT_PROMISES.delete(db); throw error; }
   },
   async get(db, k, fb = null) {
     const r = await db.prepare("SELECT value FROM settings WHERE key=?").bind(k).first();
@@ -855,13 +863,24 @@ async function handleSub(url, env, request) {
   });
 }
 
+/* ─── bounded outbound requests ─── */
+async function fetchWithTimeout(resource, init = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort("request_timeout"), timeoutMs);
+  try {
+    return await fetch(resource, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /* ─── Telegram bot (Mirza-style) ─── */
 async function tgApi(token, method, body) {
-  const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+  const r = await fetchWithTimeout(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body || {}),
-  });
+  }, 10000);
   return r.json().catch(() => ({}));
 }
 
@@ -1691,7 +1710,7 @@ async function handleApi(request, url, env) {
     return json({ ok: true }, 200, { "Set-Cookie": "lv_session=; Path=/; Max-Age=0" });
 
   // telegram webhook (no session)
-  if (path === "/telegram" && method === "POST") return handleTelegram(request, env);
+  if (path === "/telegram" && method === "POST") return await handleTelegram(request, env);
 
   const sess = await getSession(request, env.DB);
   if (sess.needSetup) return json({ error: "setup" }, 403);
@@ -2742,13 +2761,13 @@ export default {
     const path = url.pathname;
     const isWs = (request.headers.get("Upgrade") || "").toLowerCase() === "websocket";
 
-    if (isWs) return handleVless(request, env, ctx);
-    if ((path === WS || path.startsWith(WS + "/")) && isWs) return handleVless(request, env, ctx);
+    if (isWs) return await handleVless(request, env, ctx);
+    if ((path === WS || path.startsWith(WS + "/")) && isWs) return await handleVless(request, env, ctx);
 
-    if (path.startsWith("/api/")) return handleApi(request, url, env);
+    if (path.startsWith("/api/")) return await handleApi(request, url, env);
 
     if (path === ROOT || path === ROOT + "/") {
-      if (url.searchParams.has("sub")) return handleSub(url, env, request);
+      if (url.searchParams.has("sub")) return await handleSub(url, env, request);
       if (url.searchParams.has("u") || url.searchParams.has("status")) {
         const name = (url.searchParams.get("u") || url.searchParams.get("status") || "").trim();
         if (name) {
@@ -2786,12 +2805,14 @@ export default {
 
     return html(camouflage());
     } catch (err) {
-      try {
-        await Store.log(env.DB, "worker_error", err?.message || String(err));
-      } catch (_) {}
-      return new Response("Leviko Worker Error", {
+      const message = String(err?.message || err || "Unknown Worker error");
+      const stack = String(err?.stack || "");
+      // Keep diagnostics in Workers Logs; never include tokens, cookies or request bodies.
+      console.error("[LEVIKO_WORKER_EXCEPTION]", message, stack.slice(0, 3000));
+      try { await Store.log(env?.DB, "worker_error", (message + " " + stack).slice(0, 200)); } catch (_) {}
+      return new Response("Leviko Worker Error: request failed safely. Check Workers Logs for LEVIKO_WORKER_EXCEPTION.", {
         status: 500,
-        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Leviko-Error": "handled-worker-exception" }
       });
     }
   },

@@ -9,6 +9,14 @@ const CORS = {
   'Access-Control-Max-Age': '86400',
 };
 
+
+async function fetchWithTimeout(resource, init = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort("request_timeout"), timeoutMs);
+  try { return await fetch(resource, { ...init, signal: controller.signal }); }
+  finally { clearTimeout(timer); }
+}
+
 const jsonResp = (data, status = 200) =>
   new Response(JSON.stringify(data), {
     status,
@@ -56,7 +64,7 @@ export default {
         return jsonResp({ error: 'URL not allowed' }, 403);
       }
       try {
-        const resp = await fetch(target);
+        const resp = await fetchWithTimeout(target, {}, 12000);
         return new Response(await resp.text(), {
           status: resp.status,
           headers: { 'Content-Type': 'application/javascript', ...CORS },
@@ -105,7 +113,7 @@ export default {
       }
 
       console.log('[Proxy] ' + request.method + ' ' + cfUrl);
-      const resp = await fetch(cfUrl, opts);
+      const resp = await fetchWithTimeout(cfUrl, opts, 20000);
       const respText = await resp.text();
       console.log('[Proxy] Response: HTTP ' + resp.status + ', ' + respText.length + ' bytes');
       if (resp.status >= 400) {
