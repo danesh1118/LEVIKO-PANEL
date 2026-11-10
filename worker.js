@@ -276,7 +276,21 @@ async function checkUser(env, user) {
   return true;
 }
 
+// Keep WebSocket setup failures inside the request boundary. A thrown error
+// before returning the 101 response otherwise becomes Cloudflare Error 1101.
 async function handleVless(request, env, ctx) {
+  try {
+    return await handleVlessInternal(request, env, ctx);
+  } catch (error) {
+    console.error("[LEVIKO:WEBSOCKET] setup failure", error?.stack || error?.message || error);
+    return new Response("WebSocket setup failed", {
+      status: 500,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }
+    });
+  }
+}
+
+async function handleVlessInternal(request, env, ctx) {
   if ((request.headers.get("Upgrade") || "").toLowerCase() !== "websocket")
     return new Response("Expected WebSocket", { status: 426 });
 
@@ -298,6 +312,11 @@ async function handleVless(request, env, ctx) {
   let authenticated = false;
   let headerBuffer = new Uint8Array(0);
   let processing = Promise.resolve();
+  // Bound queued client data so a slow upstream cannot grow isolate memory
+  // without limit. This mirrors the bounded-buffer approach used by robust
+  // Cloudflare proxy workers.
+  let pendingBytes = 0;
+  const MAX_PENDING_BYTES = 16 * 1024 * 1024;
 
   /*
    * IMPORTANT:
@@ -327,8 +346,14 @@ async function handleVless(request, env, ctx) {
   };
 
   const scheduleFlush = () => {
-    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(flush());
-    else void flush();
+    const task = flush().catch((error) => {
+      console.error("[LEVIKO:WEBSOCKET] usage flush failed", error?.message || error);
+    });
+    if (ctx && typeof ctx.waitUntil === "function") {
+      try { ctx.waitUntil(task); } catch (_) { void task; }
+    } else {
+      void task;
+    }
   };
 
   const maybeFlush = () => {
@@ -565,7 +590,7 @@ async function handleVless(request, env, ctx) {
         server.send(new Uint8Array([parsed.versionByte, 0]));
 
       const reader = remote.readable.getReader();
-      (async () => {
+      const pump = (async () => {
         try {
           while (!closed) {
             const { done, value } = await reader.read();
@@ -578,13 +603,17 @@ async function handleVless(request, env, ctx) {
             if (server.readyState !== 1) break;
             server.send(value);
           }
-        } catch (_) {
-          // Client/network closure is normal; close below.
+        } catch (error) {
+          // A disconnect is normal; retain the reason for actual runtime faults.
+          if (!closed) console.error("[LEVIKO:WEBSOCKET] upstream read failed", error?.message || error);
         } finally {
           try { reader.releaseLock?.(); } catch (_) {}
           if (!closed) closeAll(1000);
         }
       })();
+      // The WebSocket event lifecycle owns this long-lived pump; do not pass it
+      // to waitUntil(), whose post-response lifetime is intentionally bounded.
+      void pump;
 
       return true;
     } catch (_) {
@@ -643,12 +672,24 @@ async function handleVless(request, env, ctx) {
   };
 
   const enqueue = (data) => {
-    // Keep WebSocket frame ordering deterministic. A new frame never races
-    // the previous remoteWriter.write(), and no artificial timer is used.
+    // Preserve frame order and cap queued bytes while the upstream is slow.
+    const size = data?.byteLength || 0;
+    if (!size || closed) return processing;
+    pendingBytes += size;
+    if (pendingBytes > MAX_PENDING_BYTES) {
+      pendingBytes = Math.max(0, pendingBytes - size);
+      closeAll(1013);
+      return processing;
+    }
     processing = processing.then(
       () => processChunk(data),
       () => processChunk(data)
-    ).catch(() => closeAll(1011));
+    ).catch((error) => {
+      console.error("[LEVIKO:WEBSOCKET] client queue failed", error?.message || error);
+      closeAll(1011);
+    }).finally(() => {
+      pendingBytes = Math.max(0, pendingBytes - size);
+    });
     return processing;
   };
 
